@@ -20,3 +20,7 @@ id = "REPLACE_WITH_KV_NAMESPACE_ID"
 # 설정: wrangler secret put KAKAO_API_KEY
 
 # 4. (MVP4) 골프장 예약 조회용 - 로그인 세션 불필요 내부 API 연동 시 여기에 별도 secret 추가 예정
+
+# 5. Anthropic API 키 - 스코어카드/화면캡처/영수증 이미지 인식(Claude Vision, 구조화 출력)
+#    console.anthropic.com에서 발급. 보안상 클라이언트가 아닌 이 Worker에서만 호출한다.
+# 설정: wrangler secret put ANTHROPIC_API_KEY

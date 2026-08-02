@@ -4,6 +4,7 @@ JD Times의 "Cloudflare Worker 단일 진입점" 패턴을 재사용한 개인�
 
 - MVP1: 날씨(+복장 추천), 스코어 수동입력, 기본 통계
 - MVP2: 카카오맵 연동(장소 검색·맛집·길찾기 딥링크), 골프장 마스터 DB, 동반자 관리, 정산 계산
+- MVP3: Claude Vision 이미지 인식(스코어카드/화면캡처/영수증), 출처·라운드종류 태그, 통계 필터링
 
 ## 로컬 개발
 
@@ -44,7 +45,17 @@ wrangler secret put KMA_API_KEY
 wrangler secret put KAKAO_API_KEY
 ```
 
-### 4. 배포
+### 4. Anthropic API 키 발급 및 등록 (이미지 인식용)
+
+1. [Anthropic Console](https://console.anthropic.com)에서 API 키 발급
+2. 스코어카드/화면캡처/영수증 사진 인식(Claude Vision, 구조화 출력)에 사용 — 보안상 클라이언트가 아닌 이 Worker에서만 호출
+3. 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
+
+```bash
+wrangler secret put ANTHROPIC_API_KEY
+```
+
+### 5. 배포
 
 ```bash
 npm run deploy
@@ -59,7 +70,8 @@ npm run deploy
 | POST | `/api/scores` | 스코어 기록 추가 |
 | PUT | `/api/scores/:id` | 스코어 기록 수정 |
 | DELETE | `/api/scores/:id` | 스코어 기록 삭제 |
-| GET | `/api/stats` | 최근10 평균/베스트/코스별 평균/트렌드 |
+| GET | `/api/stats?source=&roundType=` | 최근10 평균/베스트/코스별 평균/트렌드 (출처·라운드종류 필터링 가능) |
+| POST | `/api/vision/recognize` | 이미지 인식 (`context`: scorecard/voicecaddie/smartscore/receipt) — 구조화 데이터 추출 |
 | GET | `/api/settings` | 개인 설정(집 주소 좌표) 조회 |
 | PUT | `/api/settings` | 개인 설정 수정 |
 | GET | `/api/places/search?query=` | 카카오 키워드 장소 검색 (골프장 등록 자동완성) |
@@ -77,9 +89,8 @@ npm run deploy
 | POST | `/api/restaurants/favorites` | 즐겨찾기 맛집 추가 |
 | DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
 
-## 다음 단계 (MVP3+)
+## 다음 단계 (MVP4+)
 
-- 이미지 인식(Vision API) 연동 — 스코어카드/화면캡처/영수증 (공용 이미지 인식 컴포넌트)
 - 골프장 조건검색 프록시 (`/web/round/booking_tblList.do` 등) + 동반예약 비교 + 가중치 추천
 - 예약확정 메시지 붙여넣기 AI 파싱
 - 무거운 데이터(원본 사진, 백업)를 위한 Cloudflare Tunnel 경유 NAS 연동

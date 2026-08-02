@@ -13,6 +13,7 @@ async function saveScores(env, scores) {
 }
 
 const ALLOWED_SOURCES = ['직접입력', '보이스캐디', '스마트스코어', '종이스코어카드'];
+const ALLOWED_ROUND_TYPES = ['필드', '스크린'];
 
 function normalizeScore(input, existing = {}) {
   const now = new Date().toISOString();
@@ -27,6 +28,8 @@ function normalizeScore(input, existing = {}) {
     putts: input.putts != null ? Number(input.putts) : existing.putts ?? null,
     courseRating: input.courseRating != null ? Number(input.courseRating) : existing.courseRating ?? null,
     source: ALLOWED_SOURCES.includes(input.source) ? input.source : existing.source || '직접입력',
+    // 골프존 등 스크린골프 기록은 필드 라운드와 별도로 집계 (기획서 3-2 "골프존 스크린골프 스코어 기록")
+    roundType: ALLOWED_ROUND_TYPES.includes(input.roundType) ? input.roundType : existing.roundType || '필드',
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
     updatedAt: now,

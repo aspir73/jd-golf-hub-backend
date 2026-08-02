@@ -7,6 +7,7 @@ import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from '
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
 import { searchKeyword, kakaoMapDirectionsUrl } from './kakao.js';
+import { recognizeImage } from './vision.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -68,7 +69,15 @@ export default {
 
       // ===== 통계 =====
       if (pathname === '/api/stats' && method === 'GET') {
-        return json(computeStats(await listScores(env)));
+        const source = url.searchParams.get('source') || undefined;
+        const roundType = url.searchParams.get('roundType') || undefined;
+        return json(computeStats(await listScores(env), { source, roundType }));
+      }
+
+      // ===== 이미지 인식 (스코어카드/화면캡처/영수증 공용 컴포넌트) =====
+      if (pathname === '/api/vision/recognize' && method === 'POST') {
+        const body = await request.json();
+        return json(await recognizeImage(env, body));
       }
 
       // ===== 설정(집 주소) =====
