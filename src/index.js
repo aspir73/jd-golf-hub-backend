@@ -11,6 +11,8 @@ import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
 import { computeCandidateComponents } from './scoring.js';
+import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
+import { parseBookingMessage } from './messageParsing.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -212,6 +214,43 @@ export default {
         const group = await getGroup(env, compareMatch[1]);
         if (!group) return error('해당 그룹을 찾을 수 없습니다', 404);
         return json(await computeCandidateComponents(env, group));
+      }
+
+      // ===== 예약 기록 =====
+      if (pathname === '/api/bookings' && method === 'GET') {
+        return json({ bookings: await listBookings(env) });
+      }
+      if (pathname === '/api/bookings' && method === 'POST') {
+        const record = await addBooking(env, await request.json());
+        return json({ booking: record }, 201);
+      }
+      const bookingMatch = pathname.match(/^\/api\/bookings\/([^/]+)$/);
+      if (bookingMatch && method === 'PUT') {
+        const record = await updateBooking(env, bookingMatch[1], await request.json());
+        if (!record) return error('해당 예약 기록을 찾을 수 없습니다', 404);
+        return json({ booking: record });
+      }
+      if (bookingMatch && method === 'DELETE') {
+        const ok = await deleteBooking(env, bookingMatch[1]);
+        if (!ok) return error('해당 예약 기록을 찾을 수 없습니다', 404);
+        return json({ deleted: true });
+      }
+
+      // 예약확정 메시지 붙여넣기 → AI 파싱 + 기존 가예약 기록 자동 매칭 (저장은 아직 안 함, 검토용)
+      if (pathname === '/api/bookings/parse-message' && method === 'POST') {
+        const { text } = await request.json();
+        const parsed = await parseBookingMessage(env, text);
+        const bookings = await listBookings(env);
+        const matched = findMatchingBooking(bookings, parsed.courseName, parsed.roundDate);
+        return json({ parsed, matchedBookingId: matched ? matched.id : null, matchedBooking: matched });
+      }
+
+      // 매칭된 가예약 기록을 확정 처리 + 같은 그룹 나머지 항목 자동 "취소 검토 대상" 표시
+      const confirmMatch = pathname.match(/^\/api\/bookings\/([^/]+)\/confirm$/);
+      if (confirmMatch && method === 'POST') {
+        const result = await confirmMatchedBooking(env, confirmMatch[1], await request.json());
+        if (!result) return error('해당 예약 기록을 찾을 수 없습니다', 404);
+        return json(result);
       }
 
       return error('Not found', 404);

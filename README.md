@@ -6,6 +6,7 @@ JD Times의 "Cloudflare Worker 단일 진입점" 패턴을 재사용한 개인�
 - MVP2: 카카오맵 연동(장소 검색·맛집·길찾기 딥링크), 골프장 마스터 DB, 동반자 관리, 정산 계산
 - MVP3: Claude Vision 이미지 인식(스코어카드/화면캡처/영수증), 출처·라운드종류 태그, 통계 필터링
 - MVP4: 골프장 조건검색(골팡 비로그인 프록시), 동반예약(백업) 비교 그룹, 가중치 기반 점수 추천
+- MVP5: 예약확정 메시지 붙여넣기 AI 파싱, 가예약↔확정 자동 매칭, 취소마감 리마인드, 예약 현황 리포트
 
 ## 로컬 개발
 
@@ -96,6 +97,12 @@ npm run deploy
 | POST | `/api/booking-groups/:id/candidates` | 그룹에 후보 추가 |
 | DELETE | `/api/booking-groups/:id/candidates/:candidateId` | 그룹에서 후보 삭제 |
 | GET | `/api/booking-groups/:id/compare` | 후보별 거리/내 평가/그린피/시간대 원시 데이터 (가중치 계산은 프론트에서) |
+| GET | `/api/bookings` | 예약 기록 전체 목록 |
+| POST | `/api/bookings` | 예약 기록 추가 |
+| PUT | `/api/bookings/:id` | 예약 기록 수정 |
+| DELETE | `/api/bookings/:id` | 예약 기록 삭제 |
+| POST | `/api/bookings/parse-message` | 예약확정 메시지 텍스트 → AI 파싱 + 기존 가예약 자동 매칭 (저장은 안 함, 검토용) |
+| POST | `/api/bookings/:id/confirm` | 매칭된 가예약을 확정 처리 + 같은 그룹 나머지 건 자동 "취소 검토 대상" 표시 |
 
 ### 골팡(golfpang.com) 연동 참고
 
@@ -104,7 +111,14 @@ npm run deploy
 헤더만 있으면 응답). 응답은 JSON이 아니라 HTML 테이블 조각이라 `src/golfpang.js`에서 정규식으로 파싱한다.
 사이트 구조가 바뀌면 파싱이 깨질 수 있으니, 검색 결과가 비정상적이면 가장 먼저 이 파서를 점검할 것.
 
-## 다음 단계 (MVP5+)
+### 예약확정 메시지 파싱 참고
 
-- 예약확정 메시지 붙여넣기 AI 파싱
+`/api/bookings/parse-message`는 `ANTHROPIC_API_KEY`(위 4번 항목, MVP3에서 이미 등록했다면 그대로 재사용)로
+Claude에게 텍스트를 구조화 출력(`output_config.format`)으로 보내 파싱한다. 같은 골프장·같은 날짜의 "가예약"
+기록이 있으면 매칭 결과를 함께 반환하지만, 실제 저장/확정은 `/api/bookings/:id/confirm` 호출 시점에만
+일어난다 — 스코어카드 인식과 동일하게 "확인/수정 화면을 거친 뒤 저장" 원칙을 따른다.
+
+## 다음 단계
+
 - 무거운 데이터(원본 사진, 백업)를 위한 Cloudflare Tunnel 경유 NAS 연동
+- 다른 예약 플랫폼(카카오골프예약, 골프산, 골프몬 등) 확장 검토
