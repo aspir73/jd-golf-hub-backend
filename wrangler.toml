@@ -14,7 +14,9 @@ id = "REPLACE_WITH_KV_NAMESPACE_ID"
 # 설정: wrangler secret put KMA_API_KEY
 # vars에 평문으로 넣지 말 것 (반드시 secret)
 
-# 3. (MVP2) 카카오맵 REST API 키 - 맛집/거리 계산용
+# 3. 카카오맵(로컬) REST API 키 - 골프장 즐겨찾기 자동완성, 맛집 검색, 길찾기 딥링크용
+#    Kakao Developers(developers.kakao.com) 로그인 → 내 애플리케이션 → 애플리케이션 추가
+#    → 앱 요약정보에서 "REST API 키" 확인 → 2024.12부터 [카카오맵] 사용 설정 별도 ON 필요
 # 설정: wrangler secret put KAKAO_API_KEY
 
 # 4. (MVP4) 골프장 예약 조회용 - 로그인 세션 불필요 내부 API 연동 시 여기에 별도 secret 추가 예정

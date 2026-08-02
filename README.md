@@ -1,7 +1,9 @@
 # JD Golf Hub - Backend (Cloudflare Worker)
 
 JD Times의 "Cloudflare Worker 단일 진입점" 패턴을 재사용한 개인용 골프 허브 백엔드.
-MVP1 범위: 날씨(+복장 추천), 스코어 수동입력, 기본 통계.
+
+- MVP1: 날씨(+복장 추천), 스코어 수동입력, 기본 통계
+- MVP2: 카카오맵 연동(장소 검색·맛집·길찾기 딥링크), 골프장 마스터 DB, 동반자 관리, 정산 계산
 
 ## 로컬 개발
 
@@ -31,7 +33,18 @@ wrangler kv namespace create GOLF_KV
 wrangler secret put KMA_API_KEY
 ```
 
-### 3. 배포
+### 3. 카카오맵 REST API 키 발급 및 등록
+
+1. [Kakao Developers](https://developers.kakao.com) 로그인 → 내 애플리케이션 → 애플리케이션 추가
+2. 앱 요약정보에서 **REST API 키** 확인
+3. **2024.12부터 [카카오맵] 사용 설정을 별도로 ON** 해야 정상 호출됨 (앱 설정 → 플랫폼/제품 설정)
+4. 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
+
+```bash
+wrangler secret put KAKAO_API_KEY
+```
+
+### 4. 배포
 
 ```bash
 npm run deploy
@@ -47,10 +60,26 @@ npm run deploy
 | PUT | `/api/scores/:id` | 스코어 기록 수정 |
 | DELETE | `/api/scores/:id` | 스코어 기록 삭제 |
 | GET | `/api/stats` | 최근10 평균/베스트/코스별 평균/트렌드 |
+| GET | `/api/settings` | 개인 설정(집 주소 좌표) 조회 |
+| PUT | `/api/settings` | 개인 설정 수정 |
+| GET | `/api/places/search?query=` | 카카오 키워드 장소 검색 (골프장 등록 자동완성) |
+| GET | `/api/courses` | 즐겨찾기 골프장 목록 |
+| POST | `/api/courses` | 골프장 등록 |
+| PUT | `/api/courses/:id` | 골프장 정보 수정 |
+| DELETE | `/api/courses/:id` | 골프장 삭제 |
+| GET | `/api/companions` | 동반자 목록 |
+| POST | `/api/companions` | 동반자 추가 |
+| PUT | `/api/companions/:id` | 동반자 정보 수정 |
+| DELETE | `/api/companions/:id` | 동반자 삭제 |
+| POST | `/api/settlement/calculate` | 정산 계산 (1인당 부담액 + 송금 목록 + 카톡 공유문구) |
+| GET | `/api/restaurants/search?lat=&lon=&timing=` | 골프장 주변 맛집 검색 (`timing`: before/after/cafe) |
+| GET | `/api/restaurants/favorites` | 즐겨찾기 맛집 목록 |
+| POST | `/api/restaurants/favorites` | 즐겨찾기 맛집 추가 |
+| DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
 
-## 다음 단계 (MVP2+)
+## 다음 단계 (MVP3+)
 
-- 카카오맵 API 연동 (맛집, 거리 계산) — `KAKAO_API_KEY` secret 추가 예정
-- 골프장 마스터 DB, 골팡 조건검색 프록시 (`/web/round/booking_tblList.do` 등)
-- 이미지 인식(Vision API) 연동 — 스코어카드/화면캡처/영수증
+- 이미지 인식(Vision API) 연동 — 스코어카드/화면캡처/영수증 (공용 이미지 인식 컴포넌트)
+- 골프장 조건검색 프록시 (`/web/round/booking_tblList.do` 등) + 동반예약 비교 + 가중치 추천
+- 예약확정 메시지 붙여넣기 AI 파싱
 - 무거운 데이터(원본 사진, 백업)를 위한 Cloudflare Tunnel 경유 NAS 연동
