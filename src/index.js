@@ -8,6 +8,9 @@ import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
 import { searchKeyword, kakaoMapDirectionsUrl } from './kakao.js';
 import { recognizeImage } from './vision.js';
+import { searchGolfpangRounds } from './golfpang.js';
+import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
+import { computeCandidateComponents } from './scoring.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -166,6 +169,49 @@ export default {
         const ok = await deleteFavoriteRestaurant(env, favMatch[1]);
         if (!ok) return error('해당 즐겨찾기를 찾을 수 없습니다', 404);
         return json({ deleted: true });
+      }
+
+      // ===== 골프장 조건검색 (골팡 비로그인 조회 프록시) =====
+      if (pathname === '/api/golfpang/search' && method === 'GET') {
+        const date = url.searchParams.get('date');
+        const ampm = url.searchParams.get('ampm') || '';
+        const sector = url.searchParams.get('sector') || '';
+        const mode = url.searchParams.get('mode') === 'join' ? 'join' : 'booking';
+        if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
+        return json(await searchGolfpangRounds(env, { date, ampm, sector, mode }));
+      }
+
+      // ===== 동반예약(백업) 비교 그룹 =====
+      if (pathname === '/api/booking-groups' && method === 'GET') {
+        return json({ groups: await listGroups(env) });
+      }
+      if (pathname === '/api/booking-groups' && method === 'POST') {
+        const record = await addGroup(env, await request.json());
+        return json({ group: record }, 201);
+      }
+      const groupMatch = pathname.match(/^\/api\/booking-groups\/([^/]+)$/);
+      if (groupMatch && method === 'DELETE') {
+        const ok = await deleteGroup(env, groupMatch[1]);
+        if (!ok) return error('해당 그룹을 찾을 수 없습니다', 404);
+        return json({ deleted: true });
+      }
+      const groupCandidatesMatch = pathname.match(/^\/api\/booking-groups\/([^/]+)\/candidates$/);
+      if (groupCandidatesMatch && method === 'POST') {
+        const group = await addCandidate(env, groupCandidatesMatch[1], await request.json());
+        if (!group) return error('해당 그룹을 찾을 수 없습니다', 404);
+        return json({ group });
+      }
+      const candidateMatch = pathname.match(/^\/api\/booking-groups\/([^/]+)\/candidates\/([^/]+)$/);
+      if (candidateMatch && method === 'DELETE') {
+        const group = await removeCandidate(env, candidateMatch[1], candidateMatch[2]);
+        if (!group) return error('해당 그룹을 찾을 수 없습니다', 404);
+        return json({ group });
+      }
+      const compareMatch = pathname.match(/^\/api\/booking-groups\/([^/]+)\/compare$/);
+      if (compareMatch && method === 'GET') {
+        const group = await getGroup(env, compareMatch[1]);
+        if (!group) return error('해당 그룹을 찾을 수 없습니다', 404);
+        return json(await computeCandidateComponents(env, group));
       }
 
       return error('Not found', 404);

@@ -5,6 +5,7 @@ JD Times의 "Cloudflare Worker 단일 진입점" 패턴을 재사용한 개인�
 - MVP1: 날씨(+복장 추천), 스코어 수동입력, 기본 통계
 - MVP2: 카카오맵 연동(장소 검색·맛집·길찾기 딥링크), 골프장 마스터 DB, 동반자 관리, 정산 계산
 - MVP3: Claude Vision 이미지 인식(스코어카드/화면캡처/영수증), 출처·라운드종류 태그, 통계 필터링
+- MVP4: 골프장 조건검색(골팡 비로그인 프록시), 동반예약(백업) 비교 그룹, 가중치 기반 점수 추천
 
 ## 로컬 개발
 
@@ -88,9 +89,22 @@ npm run deploy
 | GET | `/api/restaurants/favorites` | 즐겨찾기 맛집 목록 |
 | POST | `/api/restaurants/favorites` | 즐겨찾기 맛집 추가 |
 | DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
+| GET | `/api/golfpang/search?date=&ampm=&sector=&mode=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join) |
+| GET | `/api/booking-groups` | 동반예약(백업) 비교 그룹 목록 |
+| POST | `/api/booking-groups` | 비교 그룹 생성 (제목 + 후보 목록) |
+| DELETE | `/api/booking-groups/:id` | 비교 그룹 삭제 |
+| POST | `/api/booking-groups/:id/candidates` | 그룹에 후보 추가 |
+| DELETE | `/api/booking-groups/:id/candidates/:candidateId` | 그룹에서 후보 삭제 |
+| GET | `/api/booking-groups/:id/compare` | 후보별 거리/내 평가/그린피/시간대 원시 데이터 (가중치 계산은 프론트에서) |
 
-## 다음 단계 (MVP4+)
+### 골팡(golfpang.com) 연동 참고
 
-- 골프장 조건검색 프록시 (`/web/round/booking_tblList.do` 등) + 동반예약 비교 + 가중치 추천
+`/web/round/booking_tblList.do`(본인예약)·`/web/round/join_tblList.do`(조인/백업)는 공식 API가 아니라, 골팡
+검색 페이지가 로그인 세션 없이 호출하는 내부 엔드포인트를 그대로 재현한 것이다 (`Referer` + `X-Requested-With`
+헤더만 있으면 응답). 응답은 JSON이 아니라 HTML 테이블 조각이라 `src/golfpang.js`에서 정규식으로 파싱한다.
+사이트 구조가 바뀌면 파싱이 깨질 수 있으니, 검색 결과가 비정상적이면 가장 먼저 이 파서를 점검할 것.
+
+## 다음 단계 (MVP5+)
+
 - 예약확정 메시지 붙여넣기 AI 파싱
 - 무거운 데이터(원본 사진, 백업)를 위한 Cloudflare Tunnel 경유 NAS 연동
