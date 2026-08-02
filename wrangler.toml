@@ -1,0 +1,20 @@
+name = "jd-golf-hub-backend"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+# 1. KV 네임스페이스 바인딩 (스코어 기록, 동반자, 즐겨찾기 골프장, 정산 기록, 설정 등
+#    실시간성이 중요한 가벼운 데이터 전부. 무거운 원본 사진/백업은 NAS(추후 Cloudflare Tunnel)로 분리)
+# 생성: wrangler kv namespace create GOLF_KV
+[[kv_namespaces]]
+binding = "GOLF_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# 2. 기상청 단기예보 조회서비스 API 키 (공공데이터포털, data.go.kr)
+#    "기상청_단기예보 ((구)_동네예보) 조회서비스" 활용신청 후 발급되는 서비스키(Decoding 값) 사용
+# 설정: wrangler secret put KMA_API_KEY
+# vars에 평문으로 넣지 말 것 (반드시 secret)
+
+# 3. (MVP2) 카카오맵 REST API 키 - 맛집/거리 계산용
+# 설정: wrangler secret put KAKAO_API_KEY
+
+# 4. (MVP4) 골프장 예약 조회용 - 로그인 세션 불필요 내부 API 연동 시 여기에 별도 secret 추가 예정
