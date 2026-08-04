@@ -9,6 +9,8 @@ import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, dele
 import { searchKeyword, kakaoMapDirectionsUrl } from './kakao.js';
 import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
+import { searchGolfmonRounds } from './golfmon.js';
+import { searchKakaoGolfRounds } from './kakaogolf.js';
 import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
 import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
@@ -181,6 +183,38 @@ export default {
         const mode = url.searchParams.get('mode') === 'join' ? 'join' : 'booking';
         if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
         return json(await searchGolfpangRounds(env, { date, ampm, sector, mode }));
+      }
+
+      // ===== 골프장 조건검색 (골프몬 비로그인 조회 프록시) =====
+      if (pathname === '/api/golfmon/search' && method === 'GET') {
+        const date = url.searchParams.get('date');
+        if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
+        const locationFk = url.searchParams.get('locationFk') || '';
+        const teeOffBuckets = (url.searchParams.get('teeOffBuckets') || '').split(',').filter(Boolean);
+        const caddyTypes = (url.searchParams.get('caddyTypes') || '').split(',').filter(Boolean);
+        const settings = await getSettings(env);
+        return json(
+          await searchGolfmonRounds(env, {
+            date,
+            locationFk,
+            teeOffBuckets,
+            caddyTypes,
+            homeLat: settings.homeLat,
+            homeLon: settings.homeLon,
+          })
+        );
+      }
+
+      // ===== 골프장 조건검색 (카카오골프예약 비로그인 조회 프록시) =====
+      if (pathname === '/api/kakaogolf/search' && method === 'GET') {
+        const date = url.searchParams.get('date');
+        if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
+        const areas = (url.searchParams.get('areas') || '').split(',').filter(Boolean);
+        const timeZone = Number(url.searchParams.get('timeZone') || 0);
+        const visitorCnt = Number(url.searchParams.get('visitorCnt') || 0);
+        const greenFee = Number(url.searchParams.get('greenFee') || 0);
+        const holeCnt = Number(url.searchParams.get('holeCnt') || 0);
+        return json(await searchKakaoGolfRounds(env, { date, areas, timeZone, visitorCnt, greenFee, holeCnt }));
       }
 
       // ===== 동반예약(백업) 비교 그룹 =====

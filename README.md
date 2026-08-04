@@ -91,6 +91,8 @@ npm run deploy
 | POST | `/api/restaurants/favorites` | 즐겨찾기 맛집 추가 |
 | DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
 | GET | `/api/golfpang/search?date=&ampm=&sector=&mode=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join) |
+| GET | `/api/golfmon/search?date=&locationFk=&teeOffBuckets=&caddyTypes=` | 골프몬 비로그인 조회 프록시 (양도/조인, 콤마구분 다중선택) |
+| GET | `/api/kakaogolf/search?date=&areas=&timeZone=&visitorCnt=&greenFee=&holeCnt=` | 카카오골프예약 비로그인 조회 프록시 (`areas`: 콤마구분 지역코드) |
 | GET | `/api/booking-groups` | 동반예약(백업) 비교 그룹 목록 |
 | POST | `/api/booking-groups` | 비교 그룹 생성 (제목 + 후보 목록) |
 | DELETE | `/api/booking-groups/:id` | 비교 그룹 삭제 |
@@ -110,6 +112,24 @@ npm run deploy
 검색 페이지가 로그인 세션 없이 호출하는 내부 엔드포인트를 그대로 재현한 것이다 (`Referer` + `X-Requested-With`
 헤더만 있으면 응답). 응답은 JSON이 아니라 HTML 테이블 조각이라 `src/golfpang.js`에서 정규식으로 파싱한다.
 사이트 구조가 바뀌면 파싱이 깨질 수 있으니, 검색 결과가 비정상적이면 가장 먼저 이 파서를 점검할 것.
+
+### 골프몬(golfmon.net) 연동 참고
+
+`/api/booking/transfer_join_location`은 골팡과 마찬가지로 로그인 세션 없이 호출되는 내부 API를 그대로
+재현한 것이다 (`src/golfmon.js`). 골팡과 달리 응답이 이미 JSON이라 파싱 부담이 없다. 지역코드
+(`location_fk`)·시간대(`teeOffBuckets`)·캐디유형(`caddyTypes`) 값은 골프몬 프론트엔드 번들에 하드코딩된
+enum을 그대로 옮겨온 것이라 신뢰할 수 있다. 다만 특정 골프장을 지정하지 않은 "본인예약(부킹)" 지역 전체검색
+(`/api/search/booking`)은 실제 캡처에서 검증되지 않아 1차 버전에서는 "양도/조인" 검색만 지원한다.
+
+### 카카오골프예약(kakao.golf) 연동 참고
+
+`/api/tee-time/search`도 비로그인 상태(`GET /api/auth/kakao/user` → `{authenticated:false}`)에서 정상
+동작하는 것을 확인했다 (`src/kakaogolf.js`). 단, 이 엔드포인트는 **골프장 단위 요약**만 반환하고 골프장명은
+내려주지 않는다 — 프론트엔드 번들에서 상세 조회용 `/api/tee-time/detail` 엔드포인트를 확인했으나 실제 호출을
+캡처하지 못해 요청/응답 형식이 검증되지 않았다. 그래서 현재 `courseName`은 `골프장 #{golfInfoSeq}`로만
+표시된다 — 실제 골프장명이 필요하면 카카오골프예약에서 특정 골프장 상세 화면을 열어 HAR을 한 번 더 캡처해서
+`/api/tee-time/detail`의 요청/응답을 확인한 뒤 `src/kakaogolf.js`에 연동을 추가해야 한다. 지역코드
+(`areas1s`)도 `1`(서울/경기)만 실제 요청으로 확인했고 나머지 5개는 번들 내 지역 목록 순서로 유추한 값이다.
 
 ### 예약확정 메시지 파싱 참고
 
