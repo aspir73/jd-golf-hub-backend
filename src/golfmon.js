@@ -84,7 +84,14 @@ export async function searchGolfmonRounds(
       'Content-Type': 'application/json',
       Origin: GOLFMON_BASE,
       Referer: `${GOLFMON_BASE}/booking/overlist?locationFk=${locationFk}&date=${date}&bookingType=1`,
-      apptype: 'W',
+      appType: 'W',
+      // 골프몬이 최소한의 "브라우저다움" 검증(Accept/Accept-Language/User-Agent 존재 여부)을 추가한 것으로
+      // 보여, 이 네 헤더가 모두 있어야 통과된다(하나라도 빠지면 403). 실제 값 자체보다 "존재"가 중요해 보이지만
+      // 안전하게 실제 브라우저와 동일한 값을 보낸다.
+      Accept: 'application/json, text/plain, */*',
+      'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
     },
     body: JSON.stringify(body),
   });

@@ -81,7 +81,10 @@ export async function searchKakaoGolfRounds(
     golfinfos: [],
     searchName: title,
     areas2: [0],
-    sigunguSeq: '',
+    // 실제 캡처로 확인: sigunguSeq는 특정 시/군/구를 걸러내는 필터가 아니라 "0이 아닌 값이 있는지"만 보는
+    // 형식적 게이트다 (빈 문자열/"0"이면 list가 항상 비어서 옴, "459"든 "1"이든 같은 결과 개수가 나옴).
+    // 실제 시/군/구 코드를 모르므로 결과에 영향 없는 placeholder를 고정으로 보낸다.
+    sigunguSeq: '1',
   };
 
   const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/search`, {
