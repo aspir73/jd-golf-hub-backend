@@ -25,6 +25,55 @@ function regionLabel(code) {
   return REGIONS.find((r) => r.code === String(code))?.label || '';
 }
 
+// 골프장 상세(이름/주소/홀수 등) 조회. 실제 캡처로 확인: POST /api/golf/view, body {golfInfoSeq}.
+// 이름은 사실상 바뀌지 않으므로 KV에 영구 캐싱해 같은 골프장은 검색할 때마다 다시 부르지 않는다.
+function golfInfoKey(golfInfoSeq) {
+  return `kakaogolf:golfinfo:${golfInfoSeq}`;
+}
+
+async function fetchGolfInfo(golfInfoSeq) {
+  const res = await fetch(`${KAKAOGOLF_BASE}/api/golf/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: KAKAOGOLF_BASE,
+      Referer: `${KAKAOGOLF_BASE}/golf/${golfInfoSeq}`,
+    },
+    body: JSON.stringify({ golfInfoSeq }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.resultCode !== 200) throw new Error(data.resultMsg || '알 수 없는 오류');
+  return {
+    name: data.fullName || '',
+    holeCount: data.holeCount || '',
+    address: data.addressGibun || '',
+  };
+}
+
+/** 여러 golfInfoSeq를 병렬로 이름 해석. KV 캐시 우선, 없으면 조회 후 캐싱. 개별 실패는 무시(플레이스홀더 유지). */
+async function resolveGolfInfoMap(env, golfInfoSeqs) {
+  const uniqueSeqs = [...new Set(golfInfoSeqs)];
+  const map = {};
+  await Promise.all(
+    uniqueSeqs.map(async (seq) => {
+      try {
+        const cached = await env.GOLF_KV.get(golfInfoKey(seq), 'json');
+        if (cached) {
+          map[seq] = cached;
+          return;
+        }
+        const info = await fetchGolfInfo(seq);
+        map[seq] = info;
+        await env.GOLF_KV.put(golfInfoKey(seq), JSON.stringify(info));
+      } catch {
+        // 상세 조회 실패 시 "골프장 #번호" 플레이스홀더 유지(검색 결과 전체를 실패시키지 않음)
+      }
+    })
+  );
+  return map;
+}
+
 export async function searchKakaoGolfRounds(
   env,
   { date, areas = [], timeZone = 0, visitorCnt = 0, greenFee = 0, holeCnt = 0 }
@@ -101,21 +150,29 @@ export async function searchKakaoGolfRounds(
   const data = await res.json();
   if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
 
-  const rounds = (data.list || []).map((item) => ({
-    idx: String(item.golfInfoSeq),
-    region: title,
-    date,
-    time: '',
-    courseName: `골프장 #${item.golfInfoSeq}`,
-    holes: '',
-    greenFee: item.minGreenFeeDC ?? item.minGreenFeeNO ?? null,
-    nickname: '',
-    caddyType: '',
-    category: `매칭 ${item.timeCnt ?? 0}건 · 평점 ${item.avgStarScore ?? '-'}`,
-    contactPhone: '',
-    distanceKm: item.totalDistance != null ? Math.round(item.totalDistance / 100) / 10 : null,
-    views: null,
-  }));
+  const golfInfoMap = await resolveGolfInfoMap(
+    env,
+    (data.list || []).map((item) => item.golfInfoSeq)
+  );
+
+  const rounds = (data.list || []).map((item) => {
+    const info = golfInfoMap[item.golfInfoSeq];
+    return {
+      idx: String(item.golfInfoSeq),
+      region: title,
+      date,
+      time: '',
+      courseName: info?.name || `골프장 #${item.golfInfoSeq}`,
+      holes: info?.holeCount ? `${info.holeCount}홀` : '',
+      greenFee: item.minGreenFeeDC ?? item.minGreenFeeNO ?? null,
+      nickname: '',
+      caddyType: '',
+      category: `매칭 ${item.timeCnt ?? 0}건 · 평점 ${item.avgStarScore ?? '-'}`,
+      contactPhone: '',
+      distanceKm: item.totalDistance != null ? Math.round(item.totalDistance / 100) / 10 : null,
+      views: null,
+    };
+  });
 
   return { mode: 'join', totalCount: rounds.length, rounds };
 }
