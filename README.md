@@ -93,6 +93,7 @@ npm run deploy
 | GET | `/api/golfpang/search?date=&ampm=&sector=&mode=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join) |
 | GET | `/api/golfmon/search?date=&locationFk=&teeOffBuckets=&caddyTypes=` | 골프몬 비로그인 조회 프록시 (양도/조인, 콤마구분 다중선택) |
 | GET | `/api/kakaogolf/search?date=&areas=&timeZone=&visitorCnt=&greenFee=&holeCnt=` | 카카오골프예약 비로그인 조회 프록시 (`areas`: 콤마구분 지역코드) |
+| GET | `/api/kakaogolf/detail?golfInfoSeq=&date=&timeZone=&visitorCnt=` | 카카오골프예약 특정 골프장의 실제 예약 가능 티타임 목록 (검색 결과 클릭 시 온디맨드 조회) |
 | GET | `/api/booking-groups` | 동반예약(백업) 비교 그룹 목록 |
 | POST | `/api/booking-groups` | 비교 그룹 생성 (제목 + 후보 목록) |
 | DELETE | `/api/booking-groups/:id` | 비교 그룹 삭제 |
@@ -138,6 +139,13 @@ enum을 그대로 옮겨온 것이라 신뢰할 수 있다. 다만 특정 골프
   **전혀 달라지지 않는 것을 확인**했다(직접 curl로 검증: 값을 바꿔도 동일한 골프장 집합) — 이 검색
   엔드포인트는 인원수로 실제 필터링을 하지 않는 것으로 보여, 이 방식으로는 알아낼 수 없다. 프론트는 항상
   기본값 "4인 필수"로 표시한다.
+- 개별 티타임(시간·인원·가격): `/api/tee-time/search`는 골프장 단위 요약만 주지만, 실제 캡처로
+  `POST /api/tee-time/detail`(body: `{golfSeq, date, sigunguSeq, weekType, reservFlag, filter}`, `filter`는
+  search와 동일한 형태)을 확인했다 — `bookTime`(HHmm)·`visitorCnt`/`maxVisitorCnt`(실제 신청/정원 인원)·
+  `greenFeeDC`·`holeCntName` 등 개별 예약 가능 시간대가 그대로 내려온다. `sigunguSeq`도 search와 마찬가지로
+  형식적 게이트라 값 무관하게 동작한다. 다만 검색 결과(최대 100여 건) **전체**에 대해 이 엔드포인트를 자동
+  호출하면 Cloudflare Worker 서브리퀘스트 한도(무료 플랜 기준 요청당 50개)를 넘길 수 있어, `fetchKakaoGolfTeeTimes()`는
+  프론트에서 사용자가 특정 골프장을 선택했을 때만(`/api/kakaogolf/detail`) 호출하는 온디맨드 구조로 뒀다.
 
 지역코드(`areas1s`)는 실제 요청 캡처로 `1`(서울/경기)·`12`(강원)·`22`(충청) 세 값을 확인했고, 나머지
 3개(경상·전라·제주)는 번들 내 지역 목록 순서로 유추한 값이다.

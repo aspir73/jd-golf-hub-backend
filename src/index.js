@@ -10,7 +10,7 @@ import { searchKeyword, kakaoMapDirectionsUrl } from './kakao.js';
 import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
-import { searchKakaoGolfRounds } from './kakaogolf.js';
+import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
 import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
 import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
@@ -215,6 +215,24 @@ export default {
         const greenFee = Number(url.searchParams.get('greenFee') || 0);
         const holeCnt = Number(url.searchParams.get('holeCnt') || 0);
         return json(await searchKakaoGolfRounds(env, { date, areas, timeZone, visitorCnt, greenFee, holeCnt }));
+      }
+
+      // ===== 카카오골프예약: 특정 골프장의 실제 예약 가능 티타임 목록 (검색 결과 클릭 시 개별 조회) =====
+      if (pathname === '/api/kakaogolf/detail' && method === 'GET') {
+        const golfInfoSeq = url.searchParams.get('golfInfoSeq');
+        const date2 = url.searchParams.get('date');
+        if (!golfInfoSeq) return error('golfInfoSeq 쿼리 파라미터가 필요합니다');
+        if (!date2) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
+        const timeZone2 = Number(url.searchParams.get('timeZone') || 0);
+        const visitorCnt2 = Number(url.searchParams.get('visitorCnt') || 0);
+        return json({
+          teeTimes: await fetchKakaoGolfTeeTimes(env, {
+            golfInfoSeq,
+            date: date2,
+            timeZone: timeZone2,
+            visitorCnt: visitorCnt2,
+          }),
+        });
       }
 
       // ===== 동반예약(백업) 비교 그룹 =====

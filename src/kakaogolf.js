@@ -74,6 +74,77 @@ async function resolveGolfInfoMap(env, golfInfoSeqs) {
   return map;
 }
 
+/** 골프장 하나의 실제 예약 가능 티타임 목록 조회. 실제 캡처로 확인: POST /api/tee-time/detail,
+ * body {golfSeq, date, sigunguSeq, weekType, reservFlag, filter}. 검색 결과에는 골프장 단위 요약만 오고
+ * 개별 시간대(bookTime)·인원(visitorCnt/maxVisitorCnt)은 이 엔드포인트에서만 나온다.
+ * 검색 결과(최대 100여 건) 전체에 대해 자동으로 호출하면 Cloudflare Worker 서브리퀘스트 한도(무료 플랜
+ * 기준 요청당 50개)를 넘길 수 있어, 사용자가 특정 골프장을 선택했을 때만 개별 호출하는 용도로 둔다. */
+export async function fetchKakaoGolfTeeTimes(env, { golfInfoSeq, date, timeZone = 0, visitorCnt = 0 }) {
+  if (!golfInfoSeq) throw new Error('golfInfoSeq가 필요합니다');
+  if (!date) throw new Error('date(YYYY-MM-DD)가 필요합니다');
+  const compactDate = date.replace(/-/g, '');
+
+  const body = {
+    golfSeq: Number(golfInfoSeq),
+    date: compactDate,
+    // 검색과 동일하게 형식적 게이트일 뿐 실제 지역 필터로 작동하지 않는 것을 확인함(sigunguSeq 값과
+    // 무관하게 동일 결과) — 고정 placeholder 사용.
+    sigunguSeq: 1,
+    weekType: 0,
+    reservFlag: 'N',
+    filter: {
+      greenFee: 0,
+      greenFeeList: [],
+      timeZone,
+      timeZoneList: timeZone ? [0, timeZone] : [0],
+      orderForGolfClubListMode: 0,
+      orderForTeeTimeListMode: 0,
+      timeZoneDisable: 0,
+      greenFeeDisable: 0,
+      paymentMethodDisable: 0,
+      visitorCntDisable: 0,
+      eventEnable: false,
+      paymentMethodFlag: 0,
+      paymentMethodList: [],
+      visitorCntFlag: visitorCnt ? 3 : 0,
+      visitorCnts: visitorCnt ? [visitorCnt] : [],
+      holeCnt: 0,
+      holeCntFlag: 0,
+      holeCntList: [],
+      event: 0,
+      events: [],
+      isOnlyAvailableTeeTime: false,
+      isOnlyCashBackTeeTime: false,
+      isOnlyLowGuarantee: false,
+      paymentMethod: '',
+      visitorCnt,
+    },
+  };
+
+  const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/detail`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: KAKAOGOLF_BASE,
+      Referer: `${KAKAOGOLF_BASE}/tee-time?date=${compactDate}&area=1&timeZone=${timeZone}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`카카오골프예약 티타임 조회 실패: HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
+
+  return (data.list || []).map((item) => ({
+    time: item.bookTime ? `${item.bookTime.slice(0, 2)}:${item.bookTime.slice(2)}` : '',
+    courseSubName: item.CourseName || '',
+    holes: item.holeCntName || (item.holeCnt ? `${item.holeCnt}홀` : ''),
+    greenFee: item.greenFeeDC ?? null,
+    visitorCnt: item.visitorCnt ?? null,
+    maxVisitorCnt: item.maxVisitorCnt ?? null,
+    cashback: item.cashbackYN === 'Y',
+  }));
+}
+
 export async function searchKakaoGolfRounds(
   env,
   { date, areas = [], timeZone = 0, visitorCnt = 0, greenFee = 0, holeCnt = 0 }
