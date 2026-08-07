@@ -28,7 +28,10 @@ wrangler kv namespace create GOLF_KV
 ### 2. 기상청 단기예보 API 키 발급 및 등록
 
 1. [공공데이터포털](https://www.data.go.kr) 회원가입 (휴대폰 인증 필요)
-2. "기상청_단기예보 ((구)_동네예보) 조회서비스" 검색 → 활용신청
+2. **"기상청_단기예보 조회서비스"**(https://www.data.go.kr/data/15084084/openapi.do, "(구)_동네예보"가 아님!)
+   검색 → 활용신청. "(구)" 붙은 옛 리스팅은 별개 상품이라 여기서 승인받은 서비스키로는 호출이 안 된다
+   (`SERVICE_KEY_IS_NOT_REGISTERED_ERROR`) — 두 API가 같은 계정 인증키를 쓰더라도 상품별로 활용신청을
+   각각 승인받아야 한다.
 3. 개발계정은 신청 즉시 승인, 인증키(Encoding/Decoding) 발급
 4. **Decoding 값**을 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
 
@@ -106,6 +109,21 @@ npm run deploy
 | DELETE | `/api/bookings/:id` | 예약 기록 삭제 |
 | POST | `/api/bookings/parse-message` | 예약확정 메시지 텍스트 → AI 파싱 + 기존 가예약 자동 매칭 (저장은 안 함, 검토용) |
 | POST | `/api/bookings/:id/confirm` | 매칭된 가예약을 확정 처리 + 같은 그룹 나머지 건 자동 "취소 검토 대상" 표시 |
+
+### 기상청 단기예보 연동 참고
+
+날씨 탭이 "HTTP 400"으로 죽어있던 적이 있었는데, 원인이 두 겹이었다:
+1. 요청 URL 경로가 `VilageFcstInfoService2.0`으로 되어 있었는데 실제로는 `VilageFcstInfoService_2.0`
+   (2.0 앞에 언더스코어)이어야 한다. 언더스코어가 없으면 기상청 API가 `NO_OPENAPI_SERVICE_ERROR`
+   ("해당 오픈API 서비스가 없거나 폐기됨")로 응답한다 — 마치 서비스 자체가 폐기된 것처럼 보이는 오해하기
+   쉬운 에러라 URL 오타를 의심하기 전에 "API가 없어졌나?"로 잘못 짚기 쉽다.
+2. URL을 고친 뒤에는 `SERVICE_KEY_IS_NOT_REGISTERED_ERROR`가 나왔는데, 이건 등록된 `KMA_API_KEY`가
+   "기상청_단기예보 ((구)_동네예보) 조회서비스"(구버전 리스팅)에 대해서만 활용신청 승인이 나 있고,
+   실제로 호출하는 "기상청_단기예보 조회서비스"(id: 15084084, 신버전 리스팅)에는 별도 활용신청을 안 해서
+   생긴 문제였다 — 공공데이터포털은 계정 인증키 자체는 공용이어도 **API 상품별로 활용신청 승인을 따로
+   받아야 한다**. `fetchWeather`가 KMA 응답 바디를 그대로 에러 메시지에 실어 보내므로, 이후 비슷한 문제가
+   생기면 `/api/weather?lat=&lon=` 응답의 `error` 필드에 찍히는 `returnAuthMsg`/`returnReasonCode`를
+   바로 확인하면 된다.
 
 ### 골팡(golfpang.com) 연동 참고
 

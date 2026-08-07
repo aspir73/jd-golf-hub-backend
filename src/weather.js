@@ -1,8 +1,10 @@
 // 기상청 단기예보 조회서비스(getVilageFcst) 연동
 // 위경도 -> 격자좌표(nx, ny) 변환은 기상청이 공개한 Lambert Conformal Conic 변환 공식을 그대로 사용한다.
 
+// 주의: 경로에 언더스코어가 들어간다 (VilageFcstInfoService_2.0). 언더스코어 없이 호출하면
+// 기상청 API가 "NO_OPENAPI_SERVICE_ERROR(해당 오픈API 서비스가 없거나 폐기됨)"로 응답한다.
 const KMA_ENDPOINT =
-  'https://apis.data.go.kr/1360000/VilageFcstInfoService2.0/getVilageFcst';
+  'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst';
 
 const GRID = {
   RE: 6371.00877, // 지구 반경(km)
@@ -174,7 +176,11 @@ export async function fetchWeather(env, lat, lon) {
 
   const res = await fetch(url.toString());
   if (!res.ok) {
-    throw new Error(`기상청 API 호출 실패: HTTP ${res.status}`);
+    const bodyText = await res.text().catch((e) => `(read err: ${e.message})`);
+    const safeUrl = url.toString().replace(env.KMA_API_KEY, '***');
+    throw new Error(
+      `기상청 API 호출 실패: HTTP ${res.status} ${res.statusText} body="${bodyText.slice(0, 300)}" url=${safeUrl}`
+    );
   }
   const data = await res.json();
   const header = data?.response?.header;
