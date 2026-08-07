@@ -210,11 +210,12 @@ export default {
         const date = url.searchParams.get('date');
         if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
         const areas = (url.searchParams.get('areas') || '').split(',').filter(Boolean);
-        const timeZone = Number(url.searchParams.get('timeZone') || 0);
+        const timeZones = (url.searchParams.get('timeZones') || '').split(',').filter(Boolean).map(Number);
         const visitorCnt = Number(url.searchParams.get('visitorCnt') || 0);
-        const greenFee = Number(url.searchParams.get('greenFee') || 0);
+        const events = (url.searchParams.get('events') || '').split(',').filter(Boolean).map(Number);
+        const greenFees = (url.searchParams.get('greenFees') || '').split(',').filter(Boolean).map(Number);
         const holeCnt = Number(url.searchParams.get('holeCnt') || 0);
-        return json(await searchKakaoGolfRounds(env, { date, areas, timeZone, visitorCnt, greenFee, holeCnt }));
+        return json(await searchKakaoGolfRounds(env, { date, areas, timeZones, visitorCnt, events, greenFees, holeCnt }));
       }
 
       // ===== 카카오골프예약: 특정 골프장의 실제 예약 가능 티타임 목록 (검색 결과 클릭 시 개별 조회) =====

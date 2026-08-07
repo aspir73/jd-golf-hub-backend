@@ -1,16 +1,20 @@
 // 카카오골프예약(kakao.golf) 비로그인 조회 프록시. `/api/auth/kakao/user`가 비로그인(guest) 상태에서도
 // `/api/tee-time/search`가 정상 동작하는 것을 실제 네트워크 캡처(HAR)로 확인했다 (요청에 쿠키/인증 헤더 없음).
 //
-// 지역코드(areas1s)는 실제 요청 1건(area=1 → "서울/경기")만 직접 확인했고, 나머지 5개 코드는 프론트엔드
-// 번들에 있는 지역 목록 순서(서울/경기·강원·충청·경상·전라·제주)로 유추한 값이라 100% 확정은 아니다.
+// 이 엔드포인트는 개별 티타임이 아니라 "골프장 단위 요약"(golfInfoSeq, 최저그린피, 매칭건수 등)을 반환하고
+// 골프장명은 포함하지 않는다 — 골프장명·홀수는 /api/golf/view로, 개별 시간대는 /api/tee-time/detail로 따로
+// 조회한다(아래 함수들 참고).
 //
-// 이 엔드포인트는 개별 티타임이 아니라 "골프장 단위 요약"(golfInfoSeq, 최저그린피, 매칭건수 등)만 반환하고
-// 골프장명은 포함하지 않는다. 번들 코드에서 상세 조회용 `/api/tee-time/detail` 엔드포인트를 확인했으나
-// 이번 캡처에는 실제 호출 기록이 없어 요청/응답 형식을 검증하지 못했다 — 골프장명이 꼭 필요하면 상세 화면을
-// 열어 HAR을 한 번 더 캡처해서 확인해야 한다. 그 전까지 courseName은 "골프장 #{golfInfoSeq}"로 대체 표시한다.
+// filter(timeZone/visitorCnt/greenFee/events) 검증 참고 (2026-08): 처음엔 이 필드들을 바꿔도 "목록 개수"가
+// 그대로라 필터가 안 먹는 줄 알았는데, 이건 잘못된 검증 방법이었다 — 실제로는 골프장이 목록에서 빠지는 게
+// 아니라 각 golfInfoSeq 항목의 timeCnt/minGreenFeeDC 값 자체가 그 필터 기준으로 재계산되어 내려온다(매칭이
+// 없으면 timeCnt:0, minGreenFeeDC:0). 그래서 실제 사용할 땐 timeCnt===0인 항목을 걸러내야 "필터링된 결과"
+// 처럼 보인다. 실제 캡처(사용자 제공)로 timeZone 비트마스크(1/2/4/8)까지 확정 검증했고, visitorCnt·greenFee·
+// events도 같은 방식으로 값이 실제로 달라지는 것을 직접 확인했다.
 
 const KAKAOGOLF_BASE = 'https://www.kakao.golf';
 
+// 대권역. 실제 /api/location/area 응답(POST, body {appVersion:"0"})으로 전수 확인.
 export const REGIONS = [
   { code: '', label: '전체' },
   { code: '1', label: '서울/경기' },
@@ -21,8 +25,81 @@ export const REGIONS = [
   { code: '46', label: '제주' },
 ];
 
-function regionLabel(code) {
-  return REGIONS.find((r) => r.code === String(code))?.label || '';
+// 세부권역. /api/location/area 응답에서 status:"0"(활성)인 항목만 추림 — status:"1"인 비활성 항목
+// (강원 강릉권·양양권, 충청 서산권, 경상 상주권 등)은 제외했고, 사용자가 실제 사이트에서 확인한 목록과
+// 정확히 일치한다.
+export const SUB_REGIONS = [
+  { code: 3, majorCode: 1, label: '가평권' },
+  { code: 6, majorCode: 1, label: '남양주권' },
+  { code: 10, majorCode: 1, label: '수원권' },
+  { code: 9, majorCode: 1, label: '안성권' },
+  { code: 11, majorCode: 1, label: '여주권' },
+  { code: 8, majorCode: 1, label: '용인권' },
+  { code: 7, majorCode: 1, label: '인천권' },
+  { code: 4, majorCode: 1, label: '파주권' },
+  { code: 5, majorCode: 1, label: '포천권' },
+  { code: 19, majorCode: 12, label: '동해권' },
+  { code: 18, majorCode: 12, label: '속초권' },
+  { code: 15, majorCode: 12, label: '원주권' },
+  { code: 14, majorCode: 12, label: '춘천권' },
+  { code: 20, majorCode: 12, label: '평창권' },
+  { code: 28, majorCode: 22, label: '대전권' },
+  { code: 27, majorCode: 22, label: '부여권' },
+  { code: 29, majorCode: 22, label: '진천권' },
+  { code: 26, majorCode: 22, label: '천안권' },
+  { code: 30, majorCode: 22, label: '충주권' },
+  { code: 24, majorCode: 22, label: '태안권' },
+  { code: 35, majorCode: 31, label: '경주권' },
+  { code: 39, majorCode: 31, label: '남해권' },
+  { code: 33, majorCode: 31, label: '대구권' },
+  { code: 36, majorCode: 31, label: '부산권' },
+  { code: 38, majorCode: 31, label: '안동권' },
+  { code: 37, majorCode: 31, label: '양산권' },
+  { code: 45, majorCode: 41, label: '광주권' },
+  { code: 43, majorCode: 41, label: '순천권' },
+  { code: 44, majorCode: 41, label: '전주권' },
+  { code: 48, majorCode: 46, label: '제주권' },
+];
+
+// 티타임대. 프론트엔드 번들(CugUv3Fp.js)에 하드코딩된 값 그대로 — 비트마스크(복수선택 시 합산).
+export const TIME_ZONES = [
+  { value: 1, label: '새벽(5~7시)' },
+  { value: 2, label: '오전(7~12시)' },
+  { value: 4, label: '오후(12~4시)' },
+  { value: 8, label: '야간(4~9시)' },
+];
+
+// 내장인원수(최소 인원 조건). 단일 선택.
+export const VISITOR_COUNTS = [
+  { value: 2, label: '2인 이상' },
+  { value: 3, label: '3인 이상' },
+  { value: 4, label: '4인 필수' },
+];
+
+// 이벤트. 복수선택 가능(값 합산). value:5(노캐디)는 캐디유무 배지에도 재사용한다.
+export const EVENTS = [
+  { value: 1, label: '식음료지원' },
+  { value: 2, label: '특가' },
+  { value: 3, label: '특별이벤트' },
+  { value: 4, label: '인터넷회원가입' },
+  { value: 5, label: '노캐디' },
+  { value: 6, label: '1인 그린피 면제' },
+];
+
+// 그린피 구간. 비트마스크(복수선택 시 합산).
+export const GREEN_FEE_RANGES = [
+  { value: 1, label: '~9만원' },
+  { value: 2, label: '9~15만원' },
+  { value: 4, label: '15~20만원' },
+  { value: 8, label: '20만원~' },
+  { value: 16, label: '홈페이지참조' },
+];
+
+function areaLabel(code) {
+  const major = REGIONS.find((r) => r.code === String(code));
+  if (major) return major.label;
+  const sub = SUB_REGIONS.find((r) => r.code === Number(code));
+  return sub?.label || '';
 }
 
 // 골프장 상세(이름/주소/홀수 등) 조회. 실제 캡처로 확인: POST /api/golf/view, body {golfInfoSeq}.
@@ -94,7 +171,7 @@ export async function fetchKakaoGolfTeeTimes(env, { golfInfoSeq, date, timeZone 
     reservFlag: 'N',
     filter: {
       greenFee: 0,
-      greenFeeList: [],
+      greenFeeList: [0],
       timeZone,
       timeZoneList: timeZone ? [0, timeZone] : [0],
       orderForGolfClubListMode: 0,
@@ -147,17 +224,17 @@ export async function fetchKakaoGolfTeeTimes(env, { golfInfoSeq, date, timeZone 
 
 export async function searchKakaoGolfRounds(
   env,
-  { date, areas = [], timeZone = 0, visitorCnt = 0, greenFee = 0, holeCnt = 0 }
+  { date, areas = [], timeZones = [], visitorCnt = 0, events = [], greenFees = [], holeCnt = 0 }
 ) {
   if (!date) throw new Error('date(YYYY-MM-DD)가 필요합니다');
   const compactDate = date.replace(/-/g, '');
   const areas1s = areas.length ? areas.map(Number) : [1];
-  const title = areas1s.map(regionLabel).filter(Boolean).join(', ') || '전체';
+  const title = areas1s.map(areaLabel).filter(Boolean).join(', ') || '전체';
 
-  function buildBody(qfSeq) {
+  function buildBody(eventsForRequest) {
     return {
       date: compactDate,
-      qfSeq,
+      qfSeq: '0',
       searchType: 2,
       lowGuarantee: 'N',
       selectedDates: null,
@@ -172,29 +249,26 @@ export async function searchKakaoGolfRounds(
       listType: '0',
       detailAreaText: '',
       filter: {
-        greenFee,
-        greenFeeList: [],
-        timeZone,
-        timeZoneList: timeZone ? [0, timeZone] : [0],
+        greenFee: greenFees.reduce((a, b) => a + b, 0),
+        greenFeeList: greenFees.length ? [0, ...greenFees] : [0],
+        timeZone: timeZones.reduce((a, b) => a + b, 0),
+        timeZoneList: timeZones.length ? [0, ...timeZones] : [0],
         orderForGolfClubListMode: 0,
         orderForTeeTimeListMode: 0,
         timeZoneDisable: 0,
         greenFeeDisable: 0,
         paymentMethodDisable: 0,
         visitorCntDisable: 0,
-        eventEnable: false,
+        eventEnable: eventsForRequest.length > 0,
         paymentMethodFlag: 0,
         paymentMethodList: [],
-        // 실제 캡처로 검증: visitorCnt/visitorCntFlag/visitorCnts는 이 검색 엔드포인트에서 결과를 전혀
-        // 거르지 않는다(값을 바꿔도 동일한 골프장 목록이 나옴) — 요청 바디에는 남겨두되 결과 필터링 용도로는
-        // 쓸 수 없다. 최소 인원(내장인원수) 정보는 이 API로 알아낼 방법이 없다.
         visitorCntFlag: visitorCnt ? 3 : 0,
         visitorCnts: visitorCnt ? [visitorCnt] : [],
         holeCnt,
         holeCntFlag: 0,
         holeCntList: [],
-        event: 0,
-        events: [],
+        event: eventsForRequest.reduce((a, b) => a + b, 0),
+        events: eventsForRequest,
         isOnlyAvailableTeeTime: false,
         isOnlyCashBackTeeTime: false,
         isOnlyLowGuarantee: false,
@@ -212,7 +286,7 @@ export async function searchKakaoGolfRounds(
     };
   }
 
-  async function runSearch(qfSeq) {
+  async function runSearch(eventsForRequest) {
     const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/search`, {
       method: 'POST',
       headers: {
@@ -220,18 +294,25 @@ export async function searchKakaoGolfRounds(
         Origin: KAKAOGOLF_BASE,
         Referer: `${KAKAOGOLF_BASE}/tee-time?area=${areas1s.join(',')}&date=${compactDate}`,
       },
-      body: JSON.stringify(buildBody(qfSeq)),
+      body: JSON.stringify(buildBody(eventsForRequest)),
     });
     if (!res.ok) throw new Error(`카카오골프예약 조회 실패: HTTP ${res.status}`);
     const data = await res.json();
     if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
-    return data.list || [];
+    // 필터에 안 맞는 골프장도 목록엔 그대로 남고 timeCnt(매칭건수)만 0으로 내려온다 — 걸러낸다.
+    return (data.list || []).filter((item) => (item.timeCnt || 0) > 0);
   }
 
-  // 개별 결과에는 캐디유무가 안 내려오지만, "노캐디" 퀵필터(qfSeq=42)로 같은 조건을 한 번 더 조회하면
-  // 그 골프장 목록만 걸러져서 온다(실제 캡처로 검증) — 두 결과를 교차해서 캐디유무를 역으로 채운다.
-  const [list, noCaddieList] = await Promise.all([runSearch('0'), runSearch('42')]);
-  const noCaddieSeqs = new Set(noCaddieList.map((item) => item.golfInfoSeq));
+  // 캐디유무 배지: 사용자가 이미 "노캐디" 이벤트를 필터로 선택했으면 결과 전체가 노캐디이므로 별도 조회가
+  // 필요 없다. 아니라면 같은 조건 + 노캐디(5)만 추가한 조회를 한 번 더 해서 교차한다.
+  const alreadyNoCaddieOnly = events.includes(5);
+  const [list, noCaddieList] = await Promise.all([
+    runSearch(events),
+    alreadyNoCaddieOnly ? Promise.resolve(null) : runSearch([...events, 5]),
+  ]);
+  const noCaddieSeqs = alreadyNoCaddieOnly
+    ? new Set(list.map((item) => item.golfInfoSeq))
+    : new Set(noCaddieList.map((item) => item.golfInfoSeq));
 
   const golfInfoMap = await resolveGolfInfoMap(
     env,

@@ -92,7 +92,7 @@ npm run deploy
 | DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
 | GET | `/api/golfpang/search?date=&ampm=&sector=&mode=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join) |
 | GET | `/api/golfmon/search?date=&locationFk=&teeOffBuckets=&caddyTypes=` | 골프몬 비로그인 조회 프록시 (양도/조인, 콤마구분 다중선택) |
-| GET | `/api/kakaogolf/search?date=&areas=&timeZone=&visitorCnt=&greenFee=&holeCnt=` | 카카오골프예약 비로그인 조회 프록시 (`areas`: 콤마구분 지역코드) |
+| GET | `/api/kakaogolf/search?date=&areas=&timeZones=&visitorCnt=&events=&greenFees=&holeCnt=` | 카카오골프예약 비로그인 조회 프록시 (`areas`/`timeZones`/`events`/`greenFees`는 콤마구분 다중선택, `visitorCnt`는 단일값) |
 | GET | `/api/kakaogolf/detail?golfInfoSeq=&date=&timeZone=&visitorCnt=` | 카카오골프예약 특정 골프장의 실제 예약 가능 티타임 목록 (검색 결과 클릭 시 온디맨드 조회) |
 | GET | `/api/booking-groups` | 동반예약(백업) 비교 그룹 목록 |
 | POST | `/api/booking-groups` | 비교 그룹 생성 (제목 + 후보 목록) |
@@ -130,15 +130,24 @@ enum을 그대로 옮겨온 것이라 신뢰할 수 있다. 다만 특정 골프
 - 골프장명·홀수·주소: 상세 조회 `POST /api/golf/view`(body: `{golfInfoSeq}`)를 실제 캡처로 확인해
   `fullName`·`holeCount`·`addressGibun`을 가져온다. 검색 결과에 있는 golfInfoSeq마다 병렬로 호출하되, 이름은
   사실상 바뀌지 않으므로 `GOLF_KV`에 영구 캐싱해 같은 골프장은 한 번만 조회한다(키: `kakaogolf:golfinfo:{seq}`).
-- 캐디유무: 검색 응답의 `quickFilterList`에 `filterCode: "NO_CADDIE"`(qfSeq=42) 퀵필터가 있는데, 이 qfSeq로
-  같은 조건을 한 번 더 검색하면 **노캐디 가능한 골프장만 걸러진 목록**이 온다(실제 캡처로 검증). 기본 검색과
-  qfSeq=42 검색을 병렬로 호출해 두 결과를 golfInfoSeq 기준으로 교차, 노캐디 목록에 있으면 `노캐디 가능`으로
-  표시한다. 반대로(캐디 필수 여부를 직접 알려주는 필터는 없어서) 노캐디 목록에 없으면 그냥 빈 값으로 두고
-  프론트에서 기본값 "일반 캐디"로 표시한다.
-- 최소 인원수(내장인원수): `filter.visitorCnt`/`visitorCntFlag`/`visitorCnts`를 바꿔서 검색해봐도 결과 목록이
-  **전혀 달라지지 않는 것을 확인**했다(직접 curl로 검증: 값을 바꿔도 동일한 골프장 집합) — 이 검색
-  엔드포인트는 인원수로 실제 필터링을 하지 않는 것으로 보여, 이 방식으로는 알아낼 수 없다. 프론트는 항상
-  기본값 "4인 필수"로 표시한다.
+- 캐디유무(및 이벤트 필터 전반): 처음엔 `filter.events`/`qfSeq` 둘 다 검증 방법이 잘못돼서 "필터가 안 먹는다"고
+  잘못 결론 냈었다(아래 정정 참고). 실제로는 `filter.events`(1=식음료지원, 2=특가, 3=특별이벤트, 4=인터넷회원
+  가입, 5=노캐디, 6=1인 그린피 면제, 복수선택 시 값 합산)가 정상 작동한다. 캐디유무 배지는 검색 요청에
+  `events`가 이미 5(노캐디)를 포함하면 전체가 노캐디이므로 별도 조회 없이 바로 표시하고, 아니라면 같은 조건에
+  `events:[...선택값, 5]`를 추가한 조회를 한 번 더 병렬로 날려 golfInfoSeq를 교차한다.
+- 내장인원수: `filter.visitorCnt`(2/3/4) + `visitorCntFlag:3` + `visitorCnts:[값]`으로 실제 필터링된다(아래
+  정정 참고). 단일 선택.
+- 그린피 구간: `filter.greenFee`/`greenFeeList`(1=~9만원, 2=9~15만원, 4=15~20만원, 8=20만원~,
+  16=홈페이지참조, 복수선택 시 값 합산 + `[0, ...선택값]` 리스트) — timeZone과 동일한 비트마스크 패턴.
+- 티타임대: `filter.timeZone`/`timeZoneList`(1=새벽5~7시, 2=오전7~12시, 4=오후12~4시, 8=야간4~9시, 복수선택
+  시 값 합산 + `[0, ...선택값]` 리스트) — 사용자가 실제 사이트에서 캡처한 요청으로 비트마스크 값까지 확정
+  검증했다.
+- 지역(세부): 대권역(`areas1s`: 1=서울/경기, 12=강원, 22=충청, 31=경상, 41=전라, 46=제주) 아래 세부권역이
+  더 있다 — `POST /api/location/area`(body: `{appVersion:"0"}`, 인증 불필요)가 `{list:[{code, area1Name,
+  area2Name, seq, status}]}` 형태로 전체 계층을 내려준다. `seq`가 `areas1s`에 넣는 실제 코드이고, `code:1`이
+  대권역·`code:2`가 세부권역이다. `status:"1"`인 항목(강원 강릉권·양양권, 충청 서산권, 경상 상주권 등)은
+  비활성이라 제외했다. 전체 목록은 `SUB_REGIONS`에 하드코딩해뒀다 — 값이 거의 안 바뀌는 마스터 데이터라
+  매번 API를 부르는 대신 고정값을 쓴다.
 - 개별 티타임(시간·인원·가격): `/api/tee-time/search`는 골프장 단위 요약만 주지만, 실제 캡처로
   `POST /api/tee-time/detail`(body: `{golfSeq, date, sigunguSeq, weekType, reservFlag, filter}`, `filter`는
   search와 동일한 형태)을 확인했다 — `bookTime`(HHmm)·`visitorCnt`/`maxVisitorCnt`(실제 신청/정원 인원)·
@@ -147,8 +156,14 @@ enum을 그대로 옮겨온 것이라 신뢰할 수 있다. 다만 특정 골프
   호출하면 Cloudflare Worker 서브리퀘스트 한도(무료 플랜 기준 요청당 50개)를 넘길 수 있어, `fetchKakaoGolfTeeTimes()`는
   프론트에서 사용자가 특정 골프장을 선택했을 때만(`/api/kakaogolf/detail`) 호출하는 온디맨드 구조로 뒀다.
 
-지역코드(`areas1s`)는 실제 요청 캡처로 `1`(서울/경기)·`12`(강원)·`22`(충청) 세 값을 확인했고, 나머지
-3개(경상·전라·제주)는 번들 내 지역 목록 순서로 유추한 값이다.
+**필터 검증 방법 관련 정정 (2026-08)**: 처음엔 `filter.timeZone`/`visitorCnt`/`greenFee`/`events`를 바꿔가며
+검색해도 응답 `list`의 **항목 개수**가 똑같아서 "이 필드들은 서버에서 무시된다"고 결론 냈었는데, 이건 검증
+방법 자체가 틀렸다. 실제로는 조건에 안 맞는 골프장이 목록에서 빠지는 게 아니라, **목록엔 그대로 남고 그
+골프장의 `timeCnt`(매칭건수)·`minGreenFeeDC`(최저그린피)가 0으로 재계산**되어 온다 — 그래서 목록 길이만
+비교하면 항상 똑같아 보인다. 사용자가 실제 사이트에서 타임존 필터를 바꿔가며 캡처해준 요청이 계기가 되어
+`golfInfoSeq` 단위로 필드 값 자체를 비교해보니 필터마다 확연히 달랐다. 그래서 `searchKakaoGolfRounds()`는
+응답에서 `timeCnt > 0`인 항목만 남기고 나머지는 걸러낸다(그렇지 않으면 "매칭 0건" 골프장이 결과에 섞여
+나온다). **비슷한 유형의 검증을 할 땐 목록 길이가 아니라 항목별 필드 값을 비교할 것.**
 
 **`sigunguSeq` 함정 (2026-08 확인)**: 이 필드가 빈 문자열이면 `resultCode: 200`으로 정상 응답하면서도
 `list`가 항상 비어서 온다 — 에러 없이 조용히 실패하는 형태라 알아차리기 어렵다. 실제 캡처로 대조해보니
