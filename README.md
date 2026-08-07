@@ -33,7 +33,10 @@ wrangler kv namespace create GOLF_KV
    (`SERVICE_KEY_IS_NOT_REGISTERED_ERROR`) — 두 API가 같은 계정 인증키를 쓰더라도 상품별로 활용신청을
    각각 승인받아야 한다.
 3. 개발계정은 신청 즉시 승인, 인증키(Encoding/Decoding) 발급
-4. **Decoding 값**을 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
+4. 3~10일 뒤 중기예보까지 쓰려면 아래 두 상품도 추가로 활용신청 (같은 계정 인증키 재사용, 별도 키 등록 불필요):
+   - [기상청_중기예보 조회서비스](https://www.data.go.kr/data/15059468/openapi.do) — getMidLandFcst/getMidTa
+   - [기상청_예보구역정보 조회서비스](https://www.data.go.kr/data/15057111/openapi.do) — 지역코드 확인용(런타임에는 안 씀, 코드표 검증에만 사용했음)
+5. **Decoding 값**을 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
 
 ```bash
 wrangler secret put KMA_API_KEY
@@ -70,7 +73,8 @@ npm run deploy
 
 | Method | Path | 설명 |
 |---|---|---|
-| GET | `/api/weather?lat=&lon=` | 오늘 시간대별 예보 + 복장 추천 |
+| GET | `/api/weather?lat=&lon=&date=` | 시간대별 단기예보(오늘~모레) + 복장 추천. date 생략 시 오늘 |
+| GET | `/api/weather/midterm?lat=&lon=&date=` | 오전/오후 단위 중기예보(3~10일 뒤) + 복장 추천 |
 | GET | `/api/scores` | 스코어 기록 전체 목록 |
 | POST | `/api/scores` | 스코어 기록 추가 |
 | PUT | `/api/scores/:id` | 스코어 기록 수정 |
@@ -124,6 +128,27 @@ npm run deploy
    받아야 한다**. `fetchWeather`가 KMA 응답 바디를 그대로 에러 메시지에 실어 보내므로, 이후 비슷한 문제가
    생기면 `/api/weather?lat=&lon=` 응답의 `error` 필드에 찍히는 `returnAuthMsg`/`returnReasonCode`를
    바로 확인하면 된다.
+
+### 기상청 중기예보(3~10일 뒤) 연동 참고
+
+`getMidLandFcst`(하늘상태/강수확률)와 `getMidTa`(기온)는 둘 다 `regId` 파라미터를 받지만 **같은 도(道)여도
+서로 다른 급의 코드를 요구한다** — 이게 이 기능에서 가장 헷갈렸던 부분:
+- `getMidLandFcst`는 도 단위 코드(예: 서울.인천.경기 = `11B00000`)를 쓰면 정상적으로 하늘상태/강수확률이 나온다.
+- `getMidTa`는 **같은 도 단위 코드를 넣으면 에러 없이 `resultCode:00`을 주면서도 기온 필드가 전부 0으로 비어있다**
+  (완전히 잘못된 값인데 에러가 안 나서 제일 위험한 실패 모드였다 — 요청은 "성공"한 것처럼 보이는데 데이터가
+  가짜였음). 실제로는 그 도의 **대표 관측지점(station) 코드**가 필요하고(예: 서울 = `11B10101`), 이건
+  region보다 한 단계 더 자세한 leaf 노드다.
+- 이 station 코드는 흔히 알려진 "108=서울" 같은 정수 하나가 아니라, `FcstZoneInfoService/getFcstZoneCd`
+  응답에서 `regSp:'C'`이고 `stnF3`(그 108 스타일 정수)가 채워진 항목의 **`regId` 문자열 전체**
+  (예: `11B10101`, `stnF3:108`)를 써야 한다 — `stnF3` 숫자 자체를 `regId`로 넣으면 `NO_DATA`가 난다.
+  `MID_REGIONS`(`src/weather.js`)에 박아넣은 코드들은 전부 이 방식으로 실제 API 응답을 조회해서 검증한
+  값이고, 절대 문서/블로그의 예시값을 그대로 베끼지 않았다(그런 값들 중 상당수가 이미 폐기/변경된 상태였음).
+- 강원도는 영서/영동이 시/도명이 같아서 카카오 역지오코딩의 시/군/구 이름(강릉/동해/삼척/속초/고성/양양 =
+  영동, 나머지 = 영서)으로 한 번 더 갈랐다.
+- 응답 필드는 `wf{N}Am/Pm`·`rnSt{N}Am/Pm`(3~7일, 오전/오후 구분)와 `wf{N}`·`rnSt{N}`(8~10일, 종일
+  단위)로 나뉘는데, tmFc 발표 직후(예: 오늘 23시대에 18시 발표분 조회)엔 3~4일 필드가 아직 비어있는 경우가
+  있었다(단기예보와 겹치는 구간이라 그런 듯) — 그래서 3일 뒤 요청 시 데이터가 없을 수 있고, 이땐 애매하게
+  0을 보여주지 말고 "다음 발표 이후 다시 확인해달라"는 에러를 명시적으로 던지게 했다.
 
 ### 골팡(golfpang.com) 연동 참고
 

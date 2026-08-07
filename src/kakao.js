@@ -39,6 +39,19 @@ function mapPlace(d) {
   };
 }
 
+/** 좌표 -> 행정구역(시/도, 시/군/구) 역지오코딩. 기상청 중기예보 지역코드 매칭용(골프장 좌표 -> regId) */
+export async function coordToRegion(env, lat, lon) {
+  const data = await kakaoFetch(env, '/geo/coord2regioncode.json', { x: lon, y: lat });
+  // region_type 'H'(행정동) 우선, 없으면 'B'(법정동)
+  const docs = data.documents || [];
+  const doc = docs.find((d) => d.region_type === 'H') || docs[0];
+  if (!doc) return null;
+  return {
+    sido: doc.region_1depth_name || '',
+    sigungu: doc.region_2depth_name || '',
+  };
+}
+
 /** 키워드로 장소 검색 (골프장 즐겨찾기 등록 시 주소/연락처/좌표 자동완성용) */
 export async function searchKeyword(env, query, { lat, lon } = {}) {
   const data = await kakaoFetch(env, '/search/keyword.json', {

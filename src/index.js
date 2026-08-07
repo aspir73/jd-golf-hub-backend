@@ -1,4 +1,4 @@
-import { fetchWeather } from './weather.js';
+import { fetchWeather, fetchMidTermWeather } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -53,6 +53,16 @@ export default {
         }
         const date = url.searchParams.get('date') || undefined; // YYYY-MM-DD 또는 YYYYMMDD, 없으면 오늘(KST)
         return json(await fetchWeather(env, lat, lon, date));
+      }
+
+      if (pathname === '/api/weather/midterm' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          return error('lat, lon 쿼리 파라미터가 필요합니다');
+        }
+        const date = url.searchParams.get('date') || undefined;
+        return json(await fetchMidTermWeather(env, lat, lon, date));
       }
 
       // ===== 스코어 =====
