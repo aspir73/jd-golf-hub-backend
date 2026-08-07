@@ -51,7 +51,8 @@ export default {
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           return error('lat, lon 쿼리 파라미터가 필요합니다');
         }
-        return json(await fetchWeather(env, lat, lon));
+        const date = url.searchParams.get('date') || undefined; // YYYY-MM-DD 또는 YYYYMMDD, 없으면 오늘(KST)
+        return json(await fetchWeather(env, lat, lon, date));
       }
 
       // ===== 스코어 =====

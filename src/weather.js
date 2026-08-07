@@ -86,14 +86,27 @@ function kstTodayString(nowUtc = new Date()) {
   return `${yyyy}${mm}${dd}`;
 }
 
+/** "2026-08-09"든 "20260809"든 받아서 8자리(YYYYMMDD)로 정규화. 형식이 이상하면 null */
+function normalizeDateStr(input) {
+  if (!input) return null;
+  const digits = String(input).replace(/-/g, '');
+  return /^\d{8}$/.test(digits) ? digits : null;
+}
+
+/** YYYYMMDD 문자열 사이의 날짜 차이(일수, targetStr - baseStr) */
+function dateDiffDays(baseStr, targetStr) {
+  const toUtcDate = (s) => Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+  return Math.round((toUtcDate(targetStr) - toUtcDate(baseStr)) / (24 * 60 * 60 * 1000));
+}
+
 const SKY_LABEL = { 1: '맑음', 3: '구름많음', 4: '흐림' };
 const PTY_LABEL = { 0: '없음', 1: '비', 2: '비/눈', 3: '눈', 4: '소나기' };
 
-/** getVilageFcst 응답을 시간대별로 정리 (오늘 남은 시간대만) */
-function groupByHour(items, todayStr) {
+/** getVilageFcst 응답을 시간대별로 정리 (targetDateStr 하루치 시간대만 추림) */
+function groupByHour(items, targetDateStr) {
   const byTime = new Map();
   for (const it of items) {
-    if (it.fcstDate !== todayStr) continue;
+    if (it.fcstDate !== targetDateStr) continue;
     const key = it.fcstTime;
     if (!byTime.has(key)) byTime.set(key, { time: key });
     const bucket = byTime.get(key);
@@ -156,17 +169,32 @@ export function recommendOutfit(hourly) {
   };
 }
 
-/** GET /api/weather?lat=&lon= 처리. env.KMA_API_KEY 필요 */
-export async function fetchWeather(env, lat, lon) {
+/** GET /api/weather?lat=&lon=&date= 처리. env.KMA_API_KEY 필요.
+ *  date를 생략하면 오늘(KST), 지정하면 그 날짜의 시간대별 예보를 돌려준다.
+ *  기상청 단기예보(getVilageFcst)는 발표시각 기준 최대 약 3일치를 함께 내려주므로,
+ *  base_date 기준 +2일(모레)까지만 지원한다 — 그 밖의 날짜는 명확한 에러로 안내한다. */
+export async function fetchWeather(env, lat, lon, date) {
   if (!env.KMA_API_KEY) {
     throw new Error('KMA_API_KEY가 설정되지 않았습니다 (wrangler secret put KMA_API_KEY)');
   }
   const { nx, ny } = latLonToGrid(lat, lon);
   const { base_date, base_time } = resolveBaseDateTime();
 
+  const todayStr = kstTodayString();
+  const targetStr = normalizeDateStr(date) || todayStr;
+  const diff = dateDiffDays(base_date, targetStr);
+  if (diff < 0) {
+    throw new Error('과거 날짜는 조회할 수 없습니다.');
+  }
+  if (diff > 2) {
+    throw new Error('기상청 단기예보는 오늘부터 모레(최대 2일 뒤)까지만 제공됩니다. 더 먼 날짜는 임박해서 다시 확인해주세요.');
+  }
+
   const url = new URL(KMA_ENDPOINT);
   url.searchParams.set('serviceKey', env.KMA_API_KEY);
-  url.searchParams.set('numOfRows', '290');
+  // 단기예보는 발표 1회당 최대 약 3일(67~87시간)치를 한꺼번에 내려준다.
+  // 카테고리(TMP/POP/SKY/PTY/WSD/REH 등 12종) x 3일치를 다 담으려면 290행으로는 부족해서 1000으로 늉려잡는다.
+  url.searchParams.set('numOfRows', '1000');
   url.searchParams.set('pageNo', '1');
   url.searchParams.set('dataType', 'JSON');
   url.searchParams.set('base_date', base_date);
@@ -189,9 +217,8 @@ export async function fetchWeather(env, lat, lon) {
   }
 
   const items = data.response.body?.items?.item || [];
-  const todayStr = kstTodayString();
-  const hourly = groupByHour(items, todayStr);
+  const hourly = groupByHour(items, targetStr);
   const outfit = recommendOutfit(hourly);
 
-  return { nx, ny, base_date, base_time, hourly, outfit };
+  return { nx, ny, base_date, base_time, date: targetStr, hourly, outfit };
 }
