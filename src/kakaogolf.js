@@ -102,6 +102,16 @@ function areaLabel(code) {
   return sub?.label || '';
 }
 
+// 검색 요청은 세부지역 코드(가평권 등)로 좁혀도, 결과 카드의 "지역"은 세부지역이 아니라 대권역(서울/경기 등)
+// 으로 보여준다 — 세부지역 코드는 SUB_REGIONS의 majorCode로 대권역을 역참조한다.
+function majorAreaLabel(code) {
+  const major = REGIONS.find((r) => r.code === String(code));
+  if (major) return major.label;
+  const sub = SUB_REGIONS.find((r) => r.code === Number(code));
+  if (!sub) return '';
+  return REGIONS.find((r) => r.code === String(sub.majorCode))?.label || '';
+}
+
 // 골프장 상세(이름/주소/홀수 등) 조회. 실제 캡처로 확인: POST /api/golf/view, body {golfInfoSeq}.
 // 이름은 사실상 바뀌지 않으므로 KV에 영구 캐싱해 같은 골프장은 검색할 때마다 다시 부르지 않는다.
 function golfInfoKey(golfInfoSeq) {
@@ -230,6 +240,8 @@ export async function searchKakaoGolfRounds(
   const compactDate = date.replace(/-/g, '');
   const areas1s = areas.length ? areas.map(Number) : [1];
   const title = areas1s.map(areaLabel).filter(Boolean).join(', ') || '전체';
+  // 카드에 표시할 지역은 세부지역이 아니라 대권역으로 (예: "가평권"으로 좁혀 검색해도 "서울/경기"로 표시)
+  const regionDisplay = [...new Set(areas1s.map(majorAreaLabel).filter(Boolean))].join(', ') || '전체';
 
   function buildBody(eventsForRequest) {
     return {
@@ -323,7 +335,7 @@ export async function searchKakaoGolfRounds(
     const info = golfInfoMap[item.golfInfoSeq];
     return {
       idx: String(item.golfInfoSeq),
-      region: title,
+      region: regionDisplay,
       date,
       time: '',
       courseName: info?.name || `골프장 #${item.golfInfoSeq}`,
@@ -332,6 +344,7 @@ export async function searchKakaoGolfRounds(
       nickname: '',
       caddyType: noCaddieSeqs.has(item.golfInfoSeq) ? '노캐디 가능' : '',
       category: `매칭 ${item.timeCnt ?? 0}건 · 평점 ${item.avgStarScore ?? '-'}`,
+      matchCount: item.timeCnt ?? 0,
       contactPhone: '',
       distanceKm: item.totalDistance != null ? Math.round(item.totalDistance / 100) / 10 : null,
       views: null,
