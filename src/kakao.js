@@ -50,6 +50,47 @@ export async function searchKeyword(env, query, { lat, lon } = {}) {
   return (data.documents || []).map(mapPlace);
 }
 
+function mapAddress(d) {
+  const road = d.road_address;
+  const jibun = d.address;
+  return {
+    name: road?.building_name || d.address_name || '',
+    address: road?.address_name || jibun?.address_name || d.address_name || '',
+    phone: '',
+    lat: Number(d.y),
+    lon: Number(d.x),
+    category: '',
+    placeUrl: '',
+    distanceMeters: null,
+  };
+}
+
+/** 도로명/지번 주소로 검색 (keyword.json은 상호명 위주라 "백현로277"처럼 건물명 없는
+ *  순수 주소는 못 찾는 경우가 많음 - 카카오가 주소 전용으로 제공하는 별도 API) */
+export async function searchAddress(env, query) {
+  const data = await kakaoFetch(env, '/search/address.json', { query, size: 10 });
+  return (data.documents || []).map(mapAddress);
+}
+
+/** 주소 검색과 키워드(상호명) 검색을 함께 돌려서 합친다.
+ *  "백현로277" 같은 순수 도로명 주소와 "OO컨트리클럽" 같은 상호명 둘 다 자동완성되게.
+ *  주소 검색 결과를 우선 배치하고(더 정확한 매칭), 좌표가 거의 같은 중복은 제거한다. */
+export async function searchPlaces(env, query) {
+  const [addressResults, keywordResults] = await Promise.all([
+    searchAddress(env, query).catch(() => []),
+    searchKeyword(env, query).catch(() => []),
+  ]);
+  const seen = new Set();
+  const merged = [];
+  for (const p of [...addressResults, ...keywordResults]) {
+    const key = p.lat != null && p.lon != null ? `${p.lat.toFixed(5)},${p.lon.toFixed(5)}` : `${p.name}|${p.address}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(p);
+  }
+  return merged;
+}
+
 /** 좌표 주변 카테고리/키워드 검색 (맛집 찾기용). query가 있으면 좌표 기준 정렬 키워드검색, 없으면 카테고리검색 */
 export async function searchNearby(env, { lat, lon, categoryGroupCode, radius = 3000, query }) {
   if (!lat || !lon) throw new Error('lat, lon이 필요합니다');

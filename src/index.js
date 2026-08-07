@@ -6,7 +6,7 @@ import { listCourses, addCourse, updateCourse, deleteCourse } from './courses.js
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
-import { searchKeyword, kakaoMapDirectionsUrl } from './kakao.js';
+import { searchPlaces, kakaoMapDirectionsUrl } from './kakao.js';
 import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
@@ -99,7 +99,7 @@ export default {
       if (pathname === '/api/places/search' && method === 'GET') {
         const query = url.searchParams.get('query');
         if (!query) return error('query 쿼리 파라미터가 필요합니다');
-        return json({ places: await searchKeyword(env, query) });
+        return json({ places: await searchPlaces(env, query) });
       }
 
       // ===== 골프장 마스터 DB(즐겨찾기) =====
