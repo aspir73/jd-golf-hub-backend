@@ -4,6 +4,8 @@
 // 아니라 <tr id="tr_{idx}">로 시작하는 HTML 테이블 조각이라 정규식으로 셀을 추출한다(칼럼 순서 고정 확인됨).
 // 크롤링이 아니라 사이트 자체가 검색 폼에서 호출하는 것과 동일한 요청을 그대로 재현하는 방식이다.
 
+import { findBestMatch } from './golfCourseDB.js';
+
 const GOLFPANG_BASE = 'https://www.golfpang.com';
 
 // 검색 폼(sct select)에서 그대로 가져온 지역 코드. 처음엔 16(영호남/제주)이 sct3 서브셀렉트(영남=3/
@@ -70,12 +72,17 @@ function parseRoundRows(html) {
     }
     if (cells.length < 8) continue;
     const greenFeeMatch = (cells[7] || '').match(/[\d,]+/);
+    const courseName = cells[4] || '';
+    // 문체부 공식 골프장 DB와 매칭되면 그 공식 명칭을 실어둔다 - 카카오골프예약 쪽도 같은 DB로 매칭시키면
+    // 두 플랫폼이 "코리아CC"/"코리아컨트리클럽"처럼 표기만 다른 같은 골프장을 동일한 문자열로 취급할 수 있다.
+    // 골팡 자체 지역 라벨(cells[0])은 표준 시/도명이 아니라 매칭에 안 쓰고, 이름만으로 확신 있을 때만 채운다.
     rows.push({
       idx,
       region: cells[0] || '',
+      officialName: findBestMatch(courseName)?.name || null,
       date: cells[1] || '',
       time: cells[2] || '',
-      courseName: cells[4] || '',
+      courseName,
       holes: cells[5] || '',
       greenFee: greenFeeMatch ? Number(greenFeeMatch[0].replace(/,/g, '')) : null,
       nickname: cells[8] || '',

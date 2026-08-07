@@ -12,6 +12,8 @@
 // 처럼 보인다. 실제 캡처(사용자 제공)로 timeZone 비트마스크(1/2/4/8)까지 확정 검증했고, visitorCnt·greenFee·
 // events도 같은 방식으로 값이 실제로 달라지는 것을 직접 확인했다.
 
+import { findBestMatch } from './golfCourseDB.js';
+
 const KAKAOGOLF_BASE = 'https://www.kakao.golf';
 
 // 대권역. 실제 /api/location/area 응답(POST, body {appVersion:"0"})으로 전수 확인.
@@ -336,6 +338,7 @@ export async function searchKakaoGolfRounds(
     return {
       idx: String(item.golfInfoSeq),
       region: regionDisplay,
+      officialName: (info?.name && findBestMatch(info.name)?.name) || null,
       date,
       time: '',
       courseName: info?.name || `골프장 #${item.golfInfoSeq}`,

@@ -15,6 +15,7 @@ import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGr
 import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
 import { parseBookingMessage } from './messageParsing.js';
+import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -111,6 +112,23 @@ export default {
         const query = url.searchParams.get('query');
         if (!query) return error('query 쿼리 파라미터가 필요합니다');
         return json({ places: await searchPlaces(env, query) });
+      }
+
+      // ===== 문화체육관광부 전국 골프장 현황(공식 DB) =====
+      if (pathname === '/api/golf-db/regions' && method === 'GET') {
+        return json({ regions: listRegions() });
+      }
+      if (pathname === '/api/golf-db/search' && method === 'GET') {
+        const query = url.searchParams.get('query');
+        if (!query) return error('query 쿼리 파라미터가 필요합니다');
+        const region = url.searchParams.get('region') || undefined;
+        const type = url.searchParams.get('type') || undefined;
+        return json({ courses: searchGolfCourseDB(query, { region, type }) });
+      }
+      if (pathname === '/api/golf-db' && method === 'GET') {
+        const region = url.searchParams.get('region') || undefined;
+        const type = url.searchParams.get('type') || undefined;
+        return json({ courses: listGolfCourseDB({ region, type }) });
       }
 
       // ===== 골프장 마스터 DB(즐겨찾기) =====
