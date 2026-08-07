@@ -83,79 +83,91 @@ export async function searchKakaoGolfRounds(
   const areas1s = areas.length ? areas.map(Number) : [1];
   const title = areas1s.map(regionLabel).filter(Boolean).join(', ') || '전체';
 
-  const body = {
-    date: compactDate,
-    qfSeq: '0',
-    searchType: 2,
-    lowGuarantee: 'N',
-    selectedDates: null,
-    flagCashBack: 'N',
-    quickFilterTypeHistory: null,
-    weekType: '1',
-    areas1s,
-    enterType: 'MAIN_AREA',
-    searchSeq: '1',
-    reservFlag: 'N',
-    title,
-    listType: '0',
-    detailAreaText: '',
-    filter: {
-      greenFee,
-      greenFeeList: [],
-      timeZone,
-      timeZoneList: timeZone ? [0, timeZone] : [0],
-      orderForGolfClubListMode: 0,
-      orderForTeeTimeListMode: 0,
-      timeZoneDisable: 0,
-      greenFeeDisable: 0,
-      paymentMethodDisable: 0,
-      visitorCntDisable: 0,
-      eventEnable: false,
-      paymentMethodFlag: 0,
-      paymentMethodList: [],
-      visitorCntFlag: visitorCnt ? 3 : 0,
-      visitorCnts: visitorCnt ? [visitorCnt] : [],
-      holeCnt,
-      holeCntFlag: 0,
-      holeCntList: [],
-      event: 0,
-      events: [],
-      isOnlyAvailableTeeTime: false,
-      isOnlyCashBackTeeTime: false,
-      isOnlyLowGuarantee: false,
-      paymentMethod: '',
-      visitorCnt,
-    },
-    isOnlyCashBackCondition: 'false',
-    golfinfos: [],
-    searchName: title,
-    areas2: [0],
-    // 실제 캡처로 확인: sigunguSeq는 특정 시/군/구를 걸러내는 필터가 아니라 "0이 아닌 값이 있는지"만 보는
-    // 형식적 게이트다 (빈 문자열/"0"이면 list가 항상 비어서 옴, "459"든 "1"이든 같은 결과 개수가 나옴).
-    // 실제 시/군/구 코드를 모르므로 결과에 영향 없는 placeholder를 고정으로 보낸다.
-    sigunguSeq: '1',
-  };
+  function buildBody(qfSeq) {
+    return {
+      date: compactDate,
+      qfSeq,
+      searchType: 2,
+      lowGuarantee: 'N',
+      selectedDates: null,
+      flagCashBack: 'N',
+      quickFilterTypeHistory: null,
+      weekType: '1',
+      areas1s,
+      enterType: 'MAIN_AREA',
+      searchSeq: '1',
+      reservFlag: 'N',
+      title,
+      listType: '0',
+      detailAreaText: '',
+      filter: {
+        greenFee,
+        greenFeeList: [],
+        timeZone,
+        timeZoneList: timeZone ? [0, timeZone] : [0],
+        orderForGolfClubListMode: 0,
+        orderForTeeTimeListMode: 0,
+        timeZoneDisable: 0,
+        greenFeeDisable: 0,
+        paymentMethodDisable: 0,
+        visitorCntDisable: 0,
+        eventEnable: false,
+        paymentMethodFlag: 0,
+        paymentMethodList: [],
+        // 실제 캡처로 검증: visitorCnt/visitorCntFlag/visitorCnts는 이 검색 엔드포인트에서 결과를 전혀
+        // 거르지 않는다(값을 바꿔도 동일한 골프장 목록이 나옴) — 요청 바디에는 남겨두되 결과 필터링 용도로는
+        // 쓸 수 없다. 최소 인원(내장인원수) 정보는 이 API로 알아낼 방법이 없다.
+        visitorCntFlag: visitorCnt ? 3 : 0,
+        visitorCnts: visitorCnt ? [visitorCnt] : [],
+        holeCnt,
+        holeCntFlag: 0,
+        holeCntList: [],
+        event: 0,
+        events: [],
+        isOnlyAvailableTeeTime: false,
+        isOnlyCashBackTeeTime: false,
+        isOnlyLowGuarantee: false,
+        paymentMethod: '',
+        visitorCnt,
+      },
+      isOnlyCashBackCondition: 'false',
+      golfinfos: [],
+      searchName: title,
+      areas2: [0],
+      // 실제 캡처로 확인: sigunguSeq는 특정 시/군/구를 걸러내는 필터가 아니라 "0이 아닌 값이 있는지"만 보는
+      // 형식적 게이트다 (빈 문자열/"0"이면 list가 항상 비어서 옴, "459"든 "1"이든 같은 결과 개수가 나옴).
+      // 실제 시/군/구 코드를 모르므로 결과에 영향 없는 placeholder를 고정으로 보낸다.
+      sigunguSeq: '1',
+    };
+  }
 
-  const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/search`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Origin: KAKAOGOLF_BASE,
-      Referer: `${KAKAOGOLF_BASE}/tee-time?area=${areas1s.join(',')}&date=${compactDate}`,
-    },
-    body: JSON.stringify(body),
-  });
+  async function runSearch(qfSeq) {
+    const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: KAKAOGOLF_BASE,
+        Referer: `${KAKAOGOLF_BASE}/tee-time?area=${areas1s.join(',')}&date=${compactDate}`,
+      },
+      body: JSON.stringify(buildBody(qfSeq)),
+    });
+    if (!res.ok) throw new Error(`카카오골프예약 조회 실패: HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
+    return data.list || [];
+  }
 
-  if (!res.ok) throw new Error(`카카오골프예약 조회 실패: HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
+  // 개별 결과에는 캐디유무가 안 내려오지만, "노캐디" 퀵필터(qfSeq=42)로 같은 조건을 한 번 더 조회하면
+  // 그 골프장 목록만 걸러져서 온다(실제 캡처로 검증) — 두 결과를 교차해서 캐디유무를 역으로 채운다.
+  const [list, noCaddieList] = await Promise.all([runSearch('0'), runSearch('42')]);
+  const noCaddieSeqs = new Set(noCaddieList.map((item) => item.golfInfoSeq));
 
   const golfInfoMap = await resolveGolfInfoMap(
     env,
-    (data.list || []).map((item) => item.golfInfoSeq)
+    list.map((item) => item.golfInfoSeq)
   );
 
-  const rounds = (data.list || []).map((item) => {
+  const rounds = list.map((item) => {
     const info = golfInfoMap[item.golfInfoSeq];
     return {
       idx: String(item.golfInfoSeq),
@@ -166,7 +178,7 @@ export async function searchKakaoGolfRounds(
       holes: info?.holeCount ? `${info.holeCount}홀` : '',
       greenFee: item.minGreenFeeDC ?? item.minGreenFeeNO ?? null,
       nickname: '',
-      caddyType: '',
+      caddyType: noCaddieSeqs.has(item.golfInfoSeq) ? '노캐디 가능' : '',
       category: `매칭 ${item.timeCnt ?? 0}건 · 평점 ${item.avgStarScore ?? '-'}`,
       contactPhone: '',
       distanceKm: item.totalDistance != null ? Math.round(item.totalDistance / 100) / 10 : null,
