@@ -6,14 +6,21 @@
 
 const GOLFPANG_BASE = 'https://www.golfpang.com';
 
-// 검색 폼(sct select)에서 그대로 가져온 지역 코드. 16(영호남/제주)은 하위지역(영남/호남/제주) 추가 선택이
-// 필요한 구조라 1차 버전에서는 상위 지역까지만 지원한다.
+// 검색 폼(sct select)에서 그대로 가져온 지역 코드. 처음엔 16(영호남/제주)이 sct3 서브셀렉트(영남=3/
+// 호남=6/제주=7)로 좁혀지는 구조라고만 보고 상위 지역까지만 지원했는데, 실제 검색 폼 HTML을 다시 받아보니
+// sct 자신에 "8=원주/영동"(사실상 강원) 옵션이 별도로 있었고, 직접 curl 검증 결과 sector=3/6/7을 sct3
+// 경유 없이 곧장 넣어도 그대로 필터링된다(sector=6 → 28건, 전부 "호남"). 그래서 영남/호남/제주도 각자
+// 독립된 지역 코드로 취급한다 — sector2는 실측상 결과에 영향이 없어 안 써도 된다.
 export const REGIONS = [
   { code: '', label: '전체' },
   { code: '5', label: '한강이남' },
   { code: '1', label: '강북/경춘' },
+  { code: '8', label: '강원' }, // 원주/영동
   { code: '4', label: '충청' },
-  { code: '16', label: '영호남/제주' },
+  { code: '3', label: '경상' }, // 영남
+  { code: '6', label: '전라' }, // 호남
+  { code: '7', label: '제주' },
+  { code: '16', label: '영호남/제주(통합)' },
 ];
 
 export const AMPM_OPTIONS = [
