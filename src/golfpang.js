@@ -23,6 +23,16 @@ export const AMPM_OPTIONS = [
   { code: 'nt', label: '야간' },
 ];
 
+// 검색 폼의 캐디유무(cadyChk) 셀렉트 그대로. onchange="cdOrder(this.value)" — 요청 바디의 cdOrder 필드에
+// 그대로 들어간다. 실제 curl로 cdOrder=2(노캐디) 검증: 100건 중 66건이 전부 노캐디로만 걸러짐.
+export const CADDY_TYPES = [
+  { code: '', label: '전체' },
+  { code: '0', label: '일반캐디' },
+  { code: '1', label: '운전캐디' },
+  { code: '2', label: '노캐디' },
+  { code: '3', label: '인턴캐디' },
+];
+
 function stripTags(html) {
   return html
     .replace(/<[^>]*>/g, '')
@@ -71,7 +81,7 @@ function parseRoundRows(html) {
 }
 
 /** mode: 'booking'(본인예약) | 'join'(조인/백업) */
-export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking' }) {
+export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking', caddyType = '' }) {
   if (!date) throw new Error('date(YYYY-MM-DD)가 필요합니다');
   const isJoin = mode === 'join';
   const endpoint = isJoin ? 'join_tblList.do' : 'booking_tblList.do';
@@ -87,7 +97,7 @@ export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', 
     cust_nick: '',
     clubname: '',
     sector2: sector,
-    cdOrder: '',
+    cdOrder: caddyType,
   });
   if (isJoin) {
     body.set('notima', '');

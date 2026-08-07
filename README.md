@@ -90,7 +90,7 @@ npm run deploy
 | GET | `/api/restaurants/favorites` | 즐겨찾기 맛집 목록 |
 | POST | `/api/restaurants/favorites` | 즐겨찾기 맛집 추가 |
 | DELETE | `/api/restaurants/favorites/:id` | 즐겨찾기 맛집 삭제 |
-| GET | `/api/golfpang/search?date=&ampm=&sector=&mode=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join) |
+| GET | `/api/golfpang/search?date=&ampm=&sector=&mode=&caddyType=` | 골팡 비로그인 조회 프록시 (`mode`: booking/join, `caddyType`: 0=일반캐디/1=운전캐디/2=노캐디/3=인턴캐디) |
 | GET | `/api/golfmon/search?date=&locationFk=&teeOffBuckets=&caddyTypes=` | 골프몬 비로그인 조회 프록시 (양도/조인, 콤마구분 다중선택) |
 | GET | `/api/kakaogolf/search?date=&areas=&timeZones=&visitorCnt=&events=&greenFees=&holeCnt=` | 카카오골프예약 비로그인 조회 프록시 (`areas`/`timeZones`/`events`/`greenFees`는 콤마구분 다중선택, `visitorCnt`는 단일값) |
 | GET | `/api/kakaogolf/detail?golfInfoSeq=&date=&timeZone=&visitorCnt=` | 카카오골프예약 특정 골프장의 실제 예약 가능 티타임 목록 (검색 결과 클릭 시 온디맨드 조회) |
@@ -113,6 +113,11 @@ npm run deploy
 검색 페이지가 로그인 세션 없이 호출하는 내부 엔드포인트를 그대로 재현한 것이다 (`Referer` + `X-Requested-With`
 헤더만 있으면 응답). 응답은 JSON이 아니라 HTML 테이블 조각이라 `src/golfpang.js`에서 정규식으로 파싱한다.
 사이트 구조가 바뀌면 파싱이 깨질 수 있으니, 검색 결과가 비정상적이면 가장 먼저 이 파서를 점검할 것.
+
+캐디유무 필터(`cdOrder`)는 검색 폼에 이미 있던 필드인데 처음엔 항상 빈 문자열로 보내고 있었다 — 실제 캡처로
+확인한 검색 폼의 `cadyChk` 셀렉트가 `onchange="cdOrder(this.value)"`로 이 필드에 값을 그대로 넣는 구조라,
+값(0=일반캐디, 1=운전캐디, 2=노캐디, 3=인턴캐디)을 그대로 전달하면 된다. 직접 curl로 검증: `cdOrder=2`로
+보내면 100건 중 66건이 전부 노캐디로만 걸러진다.
 
 ### 골프몬(golfmon.net) 연동 참고
 

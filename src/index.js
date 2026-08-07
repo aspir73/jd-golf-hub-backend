@@ -181,8 +181,9 @@ export default {
         const ampm = url.searchParams.get('ampm') || '';
         const sector = url.searchParams.get('sector') || '';
         const mode = url.searchParams.get('mode') === 'join' ? 'join' : 'booking';
+        const caddyType = url.searchParams.get('caddyType') || '';
         if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
-        return json(await searchGolfpangRounds(env, { date, ampm, sector, mode }));
+        return json(await searchGolfpangRounds(env, { date, ampm, sector, mode, caddyType }));
       }
 
       // ===== 골프장 조건검색 (골프몬 비로그인 조회 프록시) =====
