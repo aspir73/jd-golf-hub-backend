@@ -9,12 +9,20 @@ const DEFAULT_SETTINGS = {
   homeAddress: '',
   homeLat: null,
   homeLon: null,
-  preferredTimeSlot: 'morning',
+  preferredTimeSlots: ['morning'],
 };
 
 export async function getSettings(env) {
   const raw = await env.GOLF_KV.get(SETTINGS_KEY, 'json');
-  return { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  // 이전 버전(단일값 preferredTimeSlot)으로 저장된 데이터를 배열로 보정한다.
+  if (!Array.isArray(merged.preferredTimeSlots)) {
+    merged.preferredTimeSlots = raw?.preferredTimeSlot && TIME_SLOTS.includes(raw.preferredTimeSlot)
+      ? [raw.preferredTimeSlot]
+      : DEFAULT_SETTINGS.preferredTimeSlots;
+  }
+  delete merged.preferredTimeSlot;
+  return merged;
 }
 
 export async function updateSettings(env, input) {
@@ -23,8 +31,11 @@ export async function updateSettings(env, input) {
     homeAddress: input.homeAddress ?? current.homeAddress,
     homeLat: input.homeLat != null ? Number(input.homeLat) : current.homeLat,
     homeLon: input.homeLon != null ? Number(input.homeLon) : current.homeLon,
-    preferredTimeSlot: TIME_SLOTS.includes(input.preferredTimeSlot) ? input.preferredTimeSlot : current.preferredTimeSlot,
+    preferredTimeSlots: Array.isArray(input.preferredTimeSlots)
+      ? input.preferredTimeSlots.filter((s) => TIME_SLOTS.includes(s))
+      : current.preferredTimeSlots,
   };
+  if (!next.preferredTimeSlots.length) next.preferredTimeSlots = current.preferredTimeSlots;
   await env.GOLF_KV.put(SETTINGS_KEY, JSON.stringify(next));
   return next;
 }

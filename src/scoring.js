@@ -58,7 +58,7 @@ export async function computeCandidateComponents(env, group) {
   }
 
   return {
-    preferredTimeSlot: settings.preferredTimeSlot,
+    preferredTimeSlots: settings.preferredTimeSlots,
     candidates: results,
   };
 }
