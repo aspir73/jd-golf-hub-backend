@@ -161,6 +161,18 @@ function extractReservationType(text) {
   return /조인|합류|동반\s*모집|인원\s*모집/.test(text) ? '조인' : '본인';
 }
 
+/** "[안내사항]" 섹션 안 내용을 메모로 그대로 가져온다. 다음 "[...]" 섹션(또는 문자열 끝)
+ * 직전까지를 범위로 잡고, 줄 단위로 trim + 빈 줄만 제거해서 원래 불릿(·) 서식은 유지한다. */
+function extractGuidanceNotes(text) {
+  const m = text.match(/\[\s*안내사항\s*\]([\s\S]*?)(?=\[[^\]]+\]|$)/);
+  if (!m) return '';
+  return m[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function parseBookingMessage(text) {
   if (!text || !text.trim()) {
     throw new Error('분석할 메시지 내용이 필요합니다');
@@ -184,5 +196,6 @@ export async function parseBookingMessage(text) {
     contactPhone: extractContactPhone(text),
     homepageUrl: extractHomepageUrl(text),
     bookingNumber: extractBookingNumber(text),
+    memo: extractGuidanceNotes(text),
   };
 }
