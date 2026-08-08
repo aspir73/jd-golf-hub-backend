@@ -1,6 +1,9 @@
 // 예약 기록 KV CRUD (기획서 3-1 "예약 기록" 스키마). 동반예약(백업) 비교 그룹과는 별개의 개념 —
 // 그룹은 "아직 확정 안 된 후보들의 비교", 예약 기록은 "실제 가예약/확정/취소 상태를 추적하는 개별 건"이다.
 
+import { getSettings } from './settings.js';
+import { resolveCourseTravelInfo } from './kakao.js';
+
 const BOOKINGS_KEY = 'bookings';
 
 const ALLOWED_TYPES = ['본인', '조인'];
@@ -35,21 +38,44 @@ function normalizeBooking(input, existing = {}) {
     source: ALLOWED_SOURCES.includes(input.source) ? input.source : existing.source || '직접입력',
     bookingNumber: input.bookingNumber ?? existing.bookingNumber ?? '',
     greenFeeAmount: input.greenFeeAmount != null ? Number(input.greenFeeAmount) : existing.greenFeeAmount ?? null,
+    cartFeeAmount: input.cartFeeAmount != null ? Number(input.cartFeeAmount) : existing.cartFeeAmount ?? null,
+    caddyFeeAmount: input.caddyFeeAmount != null ? Number(input.caddyFeeAmount) : existing.caddyFeeAmount ?? null,
+    companionCount: input.companionCount != null ? Number(input.companionCount) : existing.companionCount ?? null,
     paymentMethod: input.paymentMethod ?? existing.paymentMethod ?? '',
     reservationName: input.reservationName ?? existing.reservationName ?? '',
     companions: Array.isArray(input.companions) ? input.companions : existing.companions ?? [],
     contactPhone: input.contactPhone ?? existing.contactPhone ?? '',
     homepageUrl: input.homepageUrl ?? existing.homepageUrl ?? '',
     memo: input.memo ?? existing.memo ?? '',
+    // 집 주소 기준 자동차 거리(km)/이동시간(분) - resolveTravelInfoIfNeeded()가 courseName이
+    // 새로 생기거나 바뀔 때만 다시 계산해서 채운다. 그 전까지는 기존 값을 유지.
+    distanceKm: existing.distanceKm ?? null,
+    durationMin: existing.durationMin ?? null,
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };
 }
 
+/** courseName이 새로 생겼거나 바뀐 경우, 또는 아직 거리 정보가 한 번도 채워진 적 없는 기존
+ * 기록(이 기능 추가 전에 만들어진 예약 등)을 수정할 때 집~골프장 자동차 거리/시간을 계산해서 채운다
+ * (courseName이 그대로인데 상태만 바꾸는 등 이미 값이 있는 사소한 수정에서는 매번 카카오 API를
+ * 다시 부르지 않는다). 집 주소가 아직 설정 안 돼 있으면 조용히 생략. */
+async function resolveTravelInfoIfNeeded(env, record, previousCourseName) {
+  const needsBackfill = record.distanceKm == null && record.courseName;
+  if (!record.courseName || (record.courseName === previousCourseName && !needsBackfill)) return record;
+  const settings = await getSettings(env);
+  if (settings.homeLat == null || settings.homeLon == null) return record;
+  const info = await resolveCourseTravelInfo(env, record.courseName, settings.homeLat, settings.homeLon);
+  record.distanceKm = info?.distanceKm ?? null;
+  record.durationMin = info?.durationMin ?? null;
+  return record;
+}
+
 export async function addBooking(env, input) {
   if (!input.courseName) throw new Error('골프장명(courseName)은 필수입니다');
   const bookings = await listBookings(env);
-  const record = normalizeBooking(input);
+  let record = normalizeBooking(input);
+  record = await resolveTravelInfoIfNeeded(env, record, null);
   bookings.push(record);
   await saveBookings(env, bookings);
   return record;
@@ -59,7 +85,9 @@ export async function updateBooking(env, id, input) {
   const bookings = await listBookings(env);
   const idx = bookings.findIndex((b) => b.id === id);
   if (idx === -1) return null;
-  const record = normalizeBooking(input, bookings[idx]);
+  const previousCourseName = bookings[idx].courseName;
+  let record = normalizeBooking(input, bookings[idx]);
+  record = await resolveTravelInfoIfNeeded(env, record, previousCourseName);
   bookings[idx] = record;
   await saveBookings(env, bookings);
   return record;
@@ -88,7 +116,9 @@ export async function confirmMatchedBooking(env, matchedId, parsedInput) {
   const idx = bookings.findIndex((b) => b.id === matchedId);
   if (idx === -1) return null;
 
-  const confirmed = normalizeBooking({ ...parsedInput, status: '확정', reviewCancel: false }, bookings[idx]);
+  const previousCourseName = bookings[idx].courseName;
+  let confirmed = normalizeBooking({ ...parsedInput, status: '확정', reviewCancel: false }, bookings[idx]);
+  confirmed = await resolveTravelInfoIfNeeded(env, confirmed, previousCourseName);
   bookings[idx] = confirmed;
 
   let siblingsUpdated = 0;

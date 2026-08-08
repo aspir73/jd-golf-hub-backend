@@ -7,7 +7,10 @@
 import { findBestMatch } from './golfCourseDB.js';
 
 /** [대괄호] 안의 첫 텍스트를 골프장명 후보로 쓰되, 문체부 공식 DB와 매칭되면 정식 명칭으로 정리한다.
- * "[용인 세현컨트리클럽]"처럼 지역명이 섞여 있어도 findBestMatch의 포함관계 매칭이 잡아준다. */
+ * "[용인 세현컨트리클럽]"처럼 지역명이 앞에 붙어있으면 그 전체로는 매칭이 애매해질 수 있다
+ * (예: "용인"만 떼도 실제로 존재하는 "용인CC"와 겹쳐버려 findBestMatch가 일부러 매칭을 포기함) -
+ * 그래서 공백 기준으로 앞 단어를 하나씩 떼어가며 다시 시도해서, 지역명을 뺀 "세현컨트리클럽"만으로
+ * 재시도하면 유일하게 매칭되는 경우를 잡아낸다. 그래도 안 되면 원문 그대로 둔다. */
 function extractCourseName(text) {
   let raw = '';
   const bracket = text.match(/\[([^\]]+)\]/);
@@ -18,8 +21,14 @@ function extractCourseName(text) {
     raw = suffixMatch ? suffixMatch[1].trim() : '';
   }
   if (!raw) return '';
-  const matched = findBestMatch(raw);
-  return matched ? matched.name : raw;
+
+  const words = raw.split(/\s+/);
+  for (let i = 0; i < words.length; i++) {
+    const candidate = words.slice(i).join(' ');
+    const matched = findBestMatch(candidate);
+    if (matched) return matched.name;
+  }
+  return raw;
 }
 
 function extractReservationName(text) {
@@ -69,13 +78,39 @@ function extractSubCourse(text) {
   return m ? m[1] : '';
 }
 
-/** "그린피"라는 단어가 명시된 경우에만 금액을 뽑는다 - "인터넷회원 15만원 / 비회원 16만원"처럼
- * 여러 요금이 나열된 경우 어느 게 내 요금인지 규칙만으로는 판단할 수 없어서 억지로 고르지 않는다. */
+/** 금액 표현("15만원", "150,000원") 하나를 원 단위 숫자로 변환 */
+function parseAmount(numStr, manWon) {
+  const num = Number(numStr.replace(/,/g, ''));
+  return manWon ? num * 10000 : num;
+}
+
+/** 그린피는 우선순위를 두고 찾는다:
+ * 1) "그린피"라는 단어가 명시돼 있으면 그 금액.
+ * 2) 없으면 "인터넷회원" 요금(회원 가입 후 적용받는, 사실상 표준 요금인 경우가 많음)을 우선 채택.
+ * 3) 그것도 없으면(예: "회원"/"비회원" 요금만 여러 개 나열된 경우) 어느 게 내 요금인지 규칙만으로는
+ *    판단할 수 없어서 억지로 고르지 않고 null로 둔다 - 사용자가 검토 화면에서 직접 채우면 된다. */
 function extractGreenFee(text) {
-  const m = text.match(/그린피[^\d]{0,10}([\d,]+)\s*(만)?\s*원/);
-  if (!m) return null;
-  const num = Number(m[1].replace(/,/g, ''));
-  return m[2] ? num * 10000 : num;
+  let m = text.match(/그린피[^\d]{0,10}([\d,]+)\s*(만)?\s*원/);
+  if (m) return parseAmount(m[1], !!m[2]);
+  m = text.match(/인터넷\s*회원[^\d]{0,10}([\d,]+)\s*(만)?\s*원/);
+  if (m) return parseAmount(m[1], !!m[2]);
+  return null;
+}
+
+// "카트비 1팀 12만원"처럼 금액 앞에 "N팀"이 끼어있으면 [^\d]{0,N} 방식으로는 "1"(팀 수)을
+// 금액으로 잘못 캡처해버린다 - "N팀" 부분을 먼저 건너뛰도록 별도 그룹으로 명시해야 한다.
+const FEE_PREFIX = '\\s*(?:\\d+\\s*팀\\s*)?[:\\-]?\\s*';
+
+/** "카트비 1팀 12만원", "카트비: 120,000원" 등에서 카트비(팀 단위 총액) 추출 */
+function extractCartFee(text) {
+  const m = text.match(new RegExp(`카트비${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`));
+  return m ? parseAmount(m[1], !!m[2]) : null;
+}
+
+/** "캐디피 1팀 16만원" 등에서 캐디피(팀 단위 총액) 추출 */
+function extractCaddyFee(text) {
+  const m = text.match(new RegExp(`캐디피${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`));
+  return m ? parseAmount(m[1], !!m[2]) : null;
 }
 
 function extractPaymentMethod(text) {
@@ -139,7 +174,10 @@ export async function parseBookingMessage(text) {
     roundTime: extractTime(text),
     reservationName: extractReservationName(text),
     companions: [],
+    companionCount: null,
     greenFeeAmount: extractGreenFee(text),
+    cartFeeAmount: extractCartFee(text),
+    caddyFeeAmount: extractCaddyFee(text),
     paymentMethod: extractPaymentMethod(text),
     cancelable: extractCancelable(text),
     cancelDeadline: extractCancelDeadline(text),

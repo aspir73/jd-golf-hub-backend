@@ -48,6 +48,21 @@ export async function searchHomepageCandidates(env, courseName) {
   }));
 }
 
+/** 골프장명 -> 집 주소까지의 자동차 거리/이동시간을 한 번에 계산(이름으로 좌표 찾기 + 길찾기).
+ * 예약 기록 저장 시 자동으로 채워주는 용도 - 이름으로 좌표를 못 찾거나 길찾기가 실패하면 null
+ * (부가정보라 실패해도 예약 저장 자체를 막지 않는다). */
+export async function resolveCourseTravelInfo(env, courseName, homeLat, homeLon) {
+  if (!courseName || homeLat == null || homeLon == null) return null;
+  try {
+    const places = await searchKeyword(env, courseName);
+    const best = places[0];
+    if (!best || best.lat == null || best.lon == null) return null;
+    return await fetchDrivingRoute(env, homeLat, homeLon, best.lat, best.lon);
+  } catch {
+    return null;
+  }
+}
+
 /** 카카오모빌리티 길찾기(자동차 경로) - 집 주소 <-> 골프장 검색결과 거리/이동시간 계산용.
  * dapi.kakao.com(Local API)과는 별도 base(apis-navi.kakaomobility.com)이지만 같은 REST API 키로 호출된다
  * (별도 활용신청/제품 등록 없이 실제 호출로 확인됨). 경로를 못 찾는 경우(고속도로 미개통 지역 등)엔
