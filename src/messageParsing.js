@@ -101,16 +101,19 @@ function extractGreenFee(text) {
 // 금액으로 잘못 캡처해버린다 - "N팀" 부분을 먼저 건너뛰도록 별도 그룹으로 명시해야 한다.
 const FEE_PREFIX = '\\s*(?:\\d+\\s*팀\\s*)?[:\\-]?\\s*';
 
-/** "카트비 1팀 12만원", "카트비: 120,000원" 등에서 카트비(팀 단위 총액) 추출 */
+/** "카트비 1팀 12만원", "카트비: 120,000원" 등에서 카트비(팀 단위 총액) 추출.
+ * 메시지에 명시가 없으면 사용자가 주로 이용하는 골프장 기준 기본값(12만원)을 채운다 -
+ * 다른 필드들과 달리 "억지로 채우지 않는다" 원칙의 예외: 카트비는 거의 항상 이 금액이라
+ * 매번 빈칸으로 두고 직접 입력하는 게 오히려 번거롭다는 사용자 피드백에 따른 것. */
 function extractCartFee(text) {
   const m = text.match(new RegExp(`카트비${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`));
-  return m ? parseAmount(m[1], !!m[2]) : null;
+  return m ? parseAmount(m[1], !!m[2]) : 120000;
 }
 
-/** "캐디피 1팀 16만원" 등에서 캐디피(팀 단위 총액) 추출 */
+/** "캐디피 1팀 16만원" 등에서 캐디피(팀 단위 총액) 추출. 명시 없으면 기본값 16만원(카트비와 같은 이유). */
 function extractCaddyFee(text) {
   const m = text.match(new RegExp(`캐디피${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`));
-  return m ? parseAmount(m[1], !!m[2]) : null;
+  return m ? parseAmount(m[1], !!m[2]) : 160000;
 }
 
 function extractPaymentMethod(text) {
@@ -161,15 +164,39 @@ function extractReservationType(text) {
   return /조인|합류|동반\s*모집|인원\s*모집/.test(text) ? '조인' : '본인';
 }
 
-/** "[안내사항]" 섹션 안 내용을 메모로 그대로 가져온다. 다음 "[...]" 섹션(또는 문자열 끝)
- * 직전까지를 범위로 잡고, 줄 단위로 trim + 빈 줄만 제거해서 원래 불릿(·) 서식은 유지한다. */
-function extractGuidanceNotes(text) {
-  const m = text.match(/\[\s*안내사항\s*\]([\s\S]*?)(?=\[[^\]]+\]|$)/);
-  if (!m) return '';
-  return m[1]
+/** 각 필드 추출기가 실제로 값을 뽑아내는 패턴들. 어떤 줄이 이 중 하나라도 걸리면 "이미 어느
+ * 항목엔가 자동으로 채워진 줄"로 보고 메모에서 제외한다. (실제 extractXxx 함수들과 동일한
+ * 정규식을 재사용 - 한쪽만 고치고 잊어버리는 일이 없도록 아래에서 그대로 가져다 쓴다.) */
+const CONSUMED_LINE_PATTERNS = [
+  /\[[^\]]+\]/, // [골프장명], [안내사항] 같은 대괄호 헤더/섹션 줄 자체(내용 줄은 아래 다른 패턴으로 판단)
+  /([가-힣]{2,4})\s*(?:회원님|고객님|예약자님)/, // 예약자명
+  /(\d{4})[-.](\d{1,2})[-.](\d{1,2})/, // 날짜(yyyy-mm-dd)
+  /(\d{1,2})\s*월\s*(\d{1,2})\s*일/, // 날짜(N월N일)
+  /(?<!\d)(\d{1,2})\/(\d{1,2})(?!\d)/, // 날짜(N/N)
+  /([01]?\d|2[0-3]):([0-5]\d)/, // 시간
+  /([가-힣]{1,6}코스)/, // 코스명
+  /그린피[^\d]{0,10}([\d,]+)\s*(만)?\s*원/, // 그린피
+  /인터넷\s*회원[^\d]{0,10}([\d,]+)\s*(만)?\s*원/, // 그린피(인터넷회원가)
+  new RegExp(`카트비${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`), // 카트비
+  new RegExp(`캐디피${FEE_PREFIX}([\\d,]+)\\s*(만)?\\s*원`), // 캐디피
+  /취소\s*불가|환불\s*불가|취소\s*가능/, // 취소 가능 여부
+  /취소.{0,10}(마감|까지)/, // 취소 가능 마감
+  /(0\d{1,2}-\d{3,4}-\d{4})/, // 문의 연락처
+  /(?:https?:\/\/)?[a-zA-Z0-9][a-zA-Z0-9-]*\.(?:com|co\.kr|kr|net|golf)\b/i, // 홈페이지
+  /예약\s*번호\s*[:\-]?\s*([A-Za-z0-9-]{4,20})/, // 예약번호
+];
+
+/** 항목에 자동으로 채워지는 내용(위 CONSUMED_LINE_PATTERNS)을 제외한 나머지 줄은 전부
+ * 메모에 그대로 남긴다 - [안내사항] 문구뿐 아니라 우리가 못 알아본 다른 내용도 버리지 않고
+ * 최소한 메모에서라도 확인할 수 있게 하려는 것("확신이 없는 필드는 채우지 않는다" 원칙과
+ * 짝을 이루는 규칙: 못 알아본 내용을 그냥 버리지 않는다).
+ * 결제방식 키워드(선불/후불 등)는 일부러 제외 판단에 안 쓴다 - "이용요금은 선불 정산입니다"처럼
+ * 더 긴 안내 문장 안에 낱말로만 등장하는 경우가 많아서, 그걸로 줄 전체를 지워버리면 문맥이 사라진다. */
+function buildLeftoverMemo(text) {
+  return text
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) => line && !CONSUMED_LINE_PATTERNS.some((re) => re.test(line)))
     .join('\n');
 }
 
@@ -196,6 +223,6 @@ export async function parseBookingMessage(text) {
     contactPhone: extractContactPhone(text),
     homepageUrl: extractHomepageUrl(text),
     bookingNumber: extractBookingNumber(text),
-    memo: extractGuidanceNotes(text),
+    memo: buildLeftoverMemo(text),
   };
 }
