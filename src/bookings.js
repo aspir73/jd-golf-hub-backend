@@ -8,7 +8,8 @@ const BOOKINGS_KEY = 'bookings';
 
 const ALLOWED_TYPES = ['본인', '조인'];
 const ALLOWED_STATUS = ['가예약', '확정', '취소예정', '취소완료'];
-const ALLOWED_SOURCES = ['골팡', '골프장 홈페이지', '직접입력'];
+// 예약 경로 구분: 골팡 앱을 통한 예약 / 골프장 홈페이지에서 본인이 직접 예약 / 동반자가 예약해준 경우.
+const ALLOWED_SOURCES = ['골팡', '홈페이지(본인예약)', '동반자예약'];
 
 export async function listBookings(env) {
   const raw = await env.GOLF_KV.get(BOOKINGS_KEY, 'json');
@@ -35,7 +36,7 @@ function normalizeBooking(input, existing = {}) {
       deadline: input.cancelable?.deadline ?? existing.cancelable?.deadline ?? '',
     },
     groupId: input.groupId !== undefined ? input.groupId : existing.groupId ?? null,
-    source: ALLOWED_SOURCES.includes(input.source) ? input.source : existing.source || '직접입력',
+    source: ALLOWED_SOURCES.includes(input.source) ? input.source : existing.source || '골팡',
     bookingNumber: input.bookingNumber ?? existing.bookingNumber ?? '',
     greenFeeAmount: input.greenFeeAmount != null ? Number(input.greenFeeAmount) : existing.greenFeeAmount ?? null,
     cartFeeAmount: input.cartFeeAmount != null ? Number(input.cartFeeAmount) : existing.cartFeeAmount ?? null,
