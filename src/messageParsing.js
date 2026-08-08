@@ -1,110 +1,150 @@
-// 예약확정 카카오톡/문자 메시지 붙여넣기 → Claude API(텍스트, 구조화 출력)로 예약 기록 추출 (기획서 3-1).
-// vision.js와 같은 이유로 클라이언트가 아닌 Worker에서만 Anthropic API를 호출한다.
+// 예약확정 카카오톡/문자 메시지 붙여넣기 → 정규식/키워드 기반 규칙 파서로 예약 기록 추출.
+// 원래는 Claude API(구조화 출력)로 뽑았는데, API 크레딧 없이도 쓸 수 있게 룰 기반으로 바꿨다.
+// 골프장마다 메시지 형식이 제각각이라 LLM만큼 정확하지는 않다 - 대신 프론트의 openBookingReviewDialog가
+// 항상 "검토 후 저장"을 거치게 되어 있어서, 몇몇 필드가 비거나 틀려도 사용자가 저장 전에 고칠 수 있다.
+// 확신이 없는 필드는 억지로 채우지 말고 빈 값으로 두는 걸 원칙으로 한다(틀린 값보다 빈 값이 낫다).
 
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VERSION = '2023-06-01';
-const MODEL = 'claude-opus-5';
+import { findBestMatch } from './golfCourseDB.js';
 
-const BOOKING_MESSAGE_SCHEMA = {
-  type: 'object',
-  properties: {
-    reservationType: { type: 'string', enum: ['본인', '조인'], description: '본인이 직접 예약한 건인지, 조인(합류) 모집에 참여하는 건인지' },
-    courseName: { type: 'string', description: '골프장명. 모르면 빈 문자열' },
-    courseSubName: { type: 'string', description: '코스명. 모르면 빈 문자열' },
-    roundDate: { type: 'string', description: '라운딩 날짜 YYYY-MM-DD. 안 보이면 빈 문자열' },
-    roundTime: { type: 'string', description: '티타임 HH:MM. 안 보이면 빈 문자열' },
-    reservationName: { type: 'string', description: '예약자명. 모르면 빈 문자열' },
-    companions: {
-      type: 'array',
-      description: '조인인 경우 함께하는 동반인원 목록(예약자 본인 제외). 정보 없으면 빈 배열',
-      items: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          phone: { type: 'string' },
-          gender: { type: 'string', description: '남/여/모름' },
-        },
-        required: ['name', 'phone', 'gender'],
-        additionalProperties: false,
-      },
-    },
-    greenFeeAmount: { type: 'integer', description: '그린피 금액(원). 모르면 -1' },
-    paymentMethod: { type: 'string', description: '결제방식 원문 그대로(예: 현장결제, 사전결제, 계좌이체 등). 모르면 빈 문자열' },
-    cancelable: { type: 'string', enum: ['가능', '불가', '알수없음'], description: '취소 가능 여부' },
-    cancelDeadline: { type: 'string', description: '취소 가능 마감 일시(원문 표현 그대로). 모르면 빈 문자열' },
-    contactPhone: { type: 'string', description: '문의 연락처. 모르면 빈 문자열' },
-    homepageUrl: { type: 'string', description: '골프장/예약 홈페이지 링크. 모르면 빈 문자열' },
-    bookingNumber: { type: 'string', description: '예약번호. 모르면 빈 문자열' },
-  },
-  required: [
-    'reservationType', 'courseName', 'courseSubName', 'roundDate', 'roundTime', 'reservationName',
-    'companions', 'greenFeeAmount', 'paymentMethod', 'cancelable', 'cancelDeadline',
-    'contactPhone', 'homepageUrl', 'bookingNumber',
-  ],
-  additionalProperties: false,
-};
-
-const PROMPT = `아래는 골프장 또는 예약 플랫폼(골팡 등)에서 받은 예약확정 카카오톡/문자 메시지입니다.
-골프장마다 표기 형식이 크게 달라도 최대한 정확히 읽어서 정보를 추출해주세요.
-- "조인" 모집 관련 메시지인 경우 예약자(모집자)와 별개로 동반인원 정보가 있으면 companions에 넣어주세요.
-- 조인 메시지는 대부분 "취소 불가 + 예약금 송금" 정책이니, 명시적으로 취소 가능하다는 언급이 없으면 cancelable은 "불가" 또는 "알수없음"으로 판단하세요.
-- 날짜는 반드시 YYYY-MM-DD 형식으로 정규화하세요 (연도가 없으면 가장 가까운 미래 날짜로 추정).
-
-메시지:
-"""
-{{MESSAGE}}
-"""`;
-
-export async function parseBookingMessage(env, text) {
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY가 설정되지 않았습니다 (wrangler secret put ANTHROPIC_API_KEY)');
+/** [대괄호] 안의 첫 텍스트를 골프장명 후보로 쓰되, 문체부 공식 DB와 매칭되면 정식 명칭으로 정리한다.
+ * "[용인 세현컨트리클럽]"처럼 지역명이 섞여 있어도 findBestMatch의 포함관계 매칭이 잡아준다. */
+function extractCourseName(text) {
+  let raw = '';
+  const bracket = text.match(/\[([^\]]+)\]/);
+  if (bracket) {
+    raw = bracket[1].trim();
+  } else {
+    const suffixMatch = text.match(/([가-힣A-Za-z0-9]{2,20}(?:컨트리클럽|골프클럽|CC|C\.C\.?|GC|G\.C\.?))/);
+    raw = suffixMatch ? suffixMatch[1].trim() : '';
   }
+  if (!raw) return '';
+  const matched = findBestMatch(raw);
+  return matched ? matched.name : raw;
+}
+
+function extractReservationName(text) {
+  const m = text.match(/([가-힣]{2,4})\s*(?:회원님|고객님|예약자님)/);
+  return m ? m[1] : '';
+}
+
+/** "8월 8일", "08월08일(토)", "2026-08-08", "2026.08.08", "8/8" 등을 YYYY-MM-DD로 정규화.
+ * 연도가 없으면 오늘 기준 가장 가까운 미래 날짜로 추정한다(취소마감일 파싱과 같은 방식). */
+function extractDate(text) {
+  let y, m, d;
+  let mm = text.match(/(\d{4})[-.](\d{1,2})[-.](\d{1,2})/);
+  if (mm) {
+    [, y, m, d] = mm;
+  } else {
+    mm = text.match(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+    if (mm) {
+      [, m, d] = mm;
+    } else {
+      mm = text.match(/(?<!\d)(\d{1,2})\/(\d{1,2})(?!\d)/);
+      if (mm) [, m, d] = mm;
+    }
+  }
+  if (!m || !d) return '';
+  m = Number(m);
+  d = Number(d);
+  if (y) return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  const now = new Date();
+  let year = now.getFullYear();
+  let candidate = new Date(year, m - 1, d);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (candidate < startOfToday) {
+    year += 1;
+    candidate = new Date(year, m - 1, d);
+  }
+  return `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function extractTime(text) {
+  const m = text.match(/([01]?\d|2[0-3]):([0-5]\d)/);
+  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '';
+}
+
+function extractSubCourse(text) {
+  const m = text.match(/([가-힣]{1,6}코스)/);
+  return m ? m[1] : '';
+}
+
+/** "그린피"라는 단어가 명시된 경우에만 금액을 뽑는다 - "인터넷회원 15만원 / 비회원 16만원"처럼
+ * 여러 요금이 나열된 경우 어느 게 내 요금인지 규칙만으로는 판단할 수 없어서 억지로 고르지 않는다. */
+function extractGreenFee(text) {
+  const m = text.match(/그린피[^\d]{0,10}([\d,]+)\s*(만)?\s*원/);
+  if (!m) return null;
+  const num = Number(m[1].replace(/,/g, ''));
+  return m[2] ? num * 10000 : num;
+}
+
+function extractPaymentMethod(text) {
+  const known = ['선불', '후불', '현장결제', '카드결제', '계좌이체', '무통장입금', '현금결제'];
+  for (const k of known) {
+    if (text.includes(k)) return k;
+  }
+  return '';
+}
+
+function extractCancelable(text) {
+  if (/취소\s*불가|환불\s*불가/.test(text)) return '불가';
+  if (/취소\s*가능/.test(text)) return '가능';
+  return '알수없음';
+}
+
+/** "취소 마감 8/18 10:00", "취소마감: 2026-08-18" 처럼 "취소"와 가까운 날짜/시간 조합을 찾는다. */
+function extractCancelDeadline(text) {
+  const idx = text.search(/취소.{0,10}(마감|까지)/);
+  if (idx === -1) return '';
+  const window = text.slice(idx, idx + 60);
+  const dm = window.match(/(\d{4}[-.]\d{1,2}[-.]\d{1,2}|\d{1,2}\s*월\s*\d{1,2}\s*일|\d{1,2}\/\d{1,2})/);
+  const tm = window.match(/([01]?\d|2[0-3]):([0-5]\d)/);
+  const parts = [];
+  if (dm) parts.push(dm[1]);
+  if (tm) parts.push(`${tm[1]}:${tm[2]}`);
+  return parts.join(' ');
+}
+
+function extractContactPhone(text) {
+  const m = text.match(/(0\d{1,2}-\d{3,4}-\d{4})/);
+  return m ? m[1] : '';
+}
+
+function extractHomepageUrl(text) {
+  const m = text.match(/(?:https?:\/\/)?([a-zA-Z0-9][a-zA-Z0-9-]*\.(?:com|co\.kr|kr|net|golf)\b[^\s,]*)/i);
+  if (!m) return '';
+  const full = m[0];
+  return /^https?:\/\//i.test(full) ? full : `https://${full}`;
+}
+
+function extractBookingNumber(text) {
+  const m = text.match(/예약\s*번호\s*[:\-]?\s*([A-Za-z0-9-]{4,20})/);
+  return m ? m[1] : '';
+}
+
+function extractReservationType(text) {
+  return /조인|합류|동반\s*모집|인원\s*모집/.test(text) ? '조인' : '본인';
+}
+
+export async function parseBookingMessage(text) {
   if (!text || !text.trim()) {
     throw new Error('분석할 메시지 내용이 필요합니다');
   }
 
-  const res = await fetch(ANTHROPIC_API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': env.ANTHROPIC_API_KEY,
-      'anthropic-version': ANTHROPIC_VERSION,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: PROMPT.replace('{{MESSAGE}}', text.slice(0, 4000)),
-        },
-      ],
-      output_config: {
-        format: { type: 'json_schema', schema: BOOKING_MESSAGE_SCHEMA },
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`메시지 분석 API 호출 실패: HTTP ${res.status} ${errText.slice(0, 300)}`);
-  }
-  const data = await res.json();
-
-  if (data.stop_reason === 'refusal') {
-    throw new Error('메시지 분석 요청이 거부되었습니다 (안전 정책)');
-  }
-
-  const textBlock = (data.content || []).find((b) => b.type === 'text');
-  if (!textBlock) throw new Error('분석 결과를 받지 못했습니다');
-
-  let parsed;
-  try {
-    parsed = JSON.parse(textBlock.text);
-  } catch {
-    throw new Error('분석 결과 JSON 파싱에 실패했습니다');
-  }
-
-  if (parsed.greenFeeAmount === -1) parsed.greenFeeAmount = null;
-  return parsed;
+  return {
+    reservationType: extractReservationType(text),
+    courseName: extractCourseName(text),
+    courseSubName: extractSubCourse(text),
+    roundDate: extractDate(text),
+    roundTime: extractTime(text),
+    reservationName: extractReservationName(text),
+    companions: [],
+    greenFeeAmount: extractGreenFee(text),
+    paymentMethod: extractPaymentMethod(text),
+    cancelable: extractCancelable(text),
+    cancelDeadline: extractCancelDeadline(text),
+    contactPhone: extractContactPhone(text),
+    homepageUrl: extractHomepageUrl(text),
+    bookingNumber: extractBookingNumber(text),
+  };
 }

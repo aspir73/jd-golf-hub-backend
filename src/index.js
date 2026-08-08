@@ -7,7 +7,6 @@ import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from '
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
 import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute, searchHomepageCandidates } from './kakao.js';
-import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
 import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
@@ -91,12 +90,6 @@ export default {
         const source = url.searchParams.get('source') || undefined;
         const roundType = url.searchParams.get('roundType') || undefined;
         return json(computeStats(await listScores(env), { source, roundType }));
-      }
-
-      // ===== 이미지 인식 (스코어카드/화면캡처/영수증 공용 컴포넌트) =====
-      if (pathname === '/api/vision/recognize' && method === 'POST') {
-        const body = await request.json();
-        return json(await recognizeImage(env, body));
       }
 
       // ===== 설정(집 주소) =====
@@ -343,7 +336,7 @@ export default {
       // 예약확정 메시지 붙여넣기 → AI 파싱 + 기존 가예약 기록 자동 매칭 (저장은 아직 안 함, 검토용)
       if (pathname === '/api/bookings/parse-message' && method === 'POST') {
         const { text } = await request.json();
-        const parsed = await parseBookingMessage(env, text);
+        const parsed = await parseBookingMessage(text);
         const bookings = await listBookings(env);
         const matched = findMatchingBooking(bookings, parsed.courseName, parsed.roundDate);
         return json({ parsed, matchedBookingId: matched ? matched.id : null, matchedBooking: matched });

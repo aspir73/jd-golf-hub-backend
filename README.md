@@ -5,8 +5,10 @@ JD Times의 "Cloudflare Worker 단일 진입점" 패턴을 재사용한 개인�
 - MVP1: 날씨(+복장 추천), 스코어 수동입력, 기본 통계
 - MVP2: 카카오맵 연동(장소 검색·맛집·길찾기 딥링크), 골프장 마스터 DB, 동반자 관리, 정산 계산
 - MVP3: Claude Vision 이미지 인식(스코어카드/화면캡처/영수증), 출처·라운드종류 태그, 통계 필터링
+  (※ 2026-08 제거됨 - 아래 참고)
 - MVP4: 골프장 조건검색(골팡 비로그인 프록시), 동반예약(백업) 비교 그룹, 가중치 기반 점수 추천
-- MVP5: 예약확정 메시지 붙여넣기 AI 파싱, 가예약↔확정 자동 매칭, 취소마감 리마인드, 예약 현황 리포트
+- MVP5: 예약확정 메시지 붙여넣기 AI 파싱(※ 2026-08부터 정규식 기반으로 전환, 아래 참고), 가예약↔확정
+  자동 매칭, 취소마감 리마인드, 예약 현황 리포트
 
 ## 로컬 개발
 
@@ -53,17 +55,7 @@ wrangler secret put KMA_API_KEY
 wrangler secret put KAKAO_API_KEY
 ```
 
-### 4. Anthropic API 키 발급 및 등록 (이미지 인식용)
-
-1. [Anthropic Console](https://console.anthropic.com)에서 API 키 발급
-2. 스코어카드/화면캡처/영수증 사진 인식(Claude Vision, 구조화 출력)에 사용 — 보안상 클라이언트가 아닌 이 Worker에서만 호출
-3. 아래 명령으로 등록 (평문 저장 금지, 반드시 secret)
-
-```bash
-wrangler secret put ANTHROPIC_API_KEY
-```
-
-### 5. 배포
+### 4. 배포
 
 ```bash
 npm run deploy
@@ -80,7 +72,6 @@ npm run deploy
 | PUT | `/api/scores/:id` | 스코어 기록 수정 |
 | DELETE | `/api/scores/:id` | 스코어 기록 삭제 |
 | GET | `/api/stats?source=&roundType=` | 최근10 평균/베스트/코스별 평균/트렌드 (출처·라운드종류 필터링 가능) |
-| POST | `/api/vision/recognize` | 이미지 인식 (`context`: scorecard/voicecaddie/smartscore/receipt) — 구조화 데이터 추출 |
 | GET | `/api/settings` | 개인 설정(집 주소 좌표) 조회 |
 | PUT | `/api/settings` | 개인 설정 수정 |
 | GET | `/api/places/search?query=` | 카카오 키워드 장소 검색 (골프장 등록 자동완성). 집 주소가 설정돼 있으면 각 결과에 자동차 거리/이동시간(driveDistanceKm/driveDurationMin)도 함께 내려줌 |
@@ -115,7 +106,7 @@ npm run deploy
 | POST | `/api/bookings` | 예약 기록 추가 |
 | PUT | `/api/bookings/:id` | 예약 기록 수정 |
 | DELETE | `/api/bookings/:id` | 예약 기록 삭제 |
-| POST | `/api/bookings/parse-message` | 예약확정 메시지 텍스트 → AI 파싱 + 기존 가예약 자동 매칭 (저장은 안 함, 검토용) |
+| POST | `/api/bookings/parse-message` | 예약확정 메시지 텍스트 → 정규식/키워드 규칙 파싱 + 기존 가예약 자동 매칭 (저장은 안 함, 검토용) |
 | POST | `/api/bookings/:id/confirm` | 매칭된 가예약을 확정 처리 + 같은 그룹 나머지 건 자동 "취소 검토 대상" 표시 |
 
 ### 기상청 단기예보 연동 참고
@@ -247,10 +238,21 @@ enum을 그대로 옮겨온 것이라 신뢰할 수 있다. 다만 특정 골프
 
 ### 예약확정 메시지 파싱 참고
 
-`/api/bookings/parse-message`는 `ANTHROPIC_API_KEY`(위 4번 항목, MVP3에서 이미 등록했다면 그대로 재사용)로
-Claude에게 텍스트를 구조화 출력(`output_config.format`)으로 보내 파싱한다. 같은 골프장·같은 날짜의 "가예약"
-기록이 있으면 매칭 결과를 함께 반환하지만, 실제 저장/확정은 `/api/bookings/:id/confirm` 호출 시점에만
-일어난다 — 스코어카드 인식과 동일하게 "확인/수정 화면을 거친 뒤 저장" 원칙을 따른다.
+원래는 Claude API(구조화 출력)로 파싱했는데, Anthropic API 크레딧 의존을 없애기 위해
+`src/messageParsing.js`를 정규식/키워드 기반 규칙 파서로 다시 작성했다(2026-08).
+`[대괄호]` 안 텍스트나 "OOCC/컨트리클럽" 패턴으로 골프장명 후보를 뽑고, `golfCourseDB.js`의
+`findBestMatch()`로 문체부 공식 DB와 매칭되면 정식 명칭으로 정리한다 — 단, 매칭이 애매하면
+(예: "용인 세현컨트리클럽"에서 "용인"만 떼면 실제로 존재하는 "용인CC"와도 겹쳐버림) 억지로
+고르지 않고 원문 그대로 둔다. 날짜/시간/전화번호/홈페이지 URL/취소가능여부/취소마감/그린피(
+"그린피"라는 단어가 명시된 경우만) 등도 정규식으로 뽑는다. 그린피처럼 메시지 안에 여러 요금이
+동시에 나열돼 있어 어떤 게 내 요금인지 규칙만으로 판단 불가능한 필드는 값을 채우지 않고 빈 채로
+둔다 — 어차피 프론트가 `openBookingReviewDialog`로 "검토 후 저장"을 항상 거치게 되어 있어서, LLM
+파싱보다 정확도는 낮아도 사용자가 저장 전에 빈 칸/오류를 고칠 수 있다. 같은 골프장·같은 날짜의
+"가예약" 기록이 있으면 매칭 결과를 함께 반환하지만, 실제 저장/확정은 `/api/bookings/:id/confirm`
+호출 시점에만 일어난다.
+
+(참고: 이전에 있던 Claude Vision 기반 이미지 인식 기능(스코어카드/영수증 등, `/api/vision/recognize`,
+`src/vision.js`)은 통째로 제거했다 — 지금은 `ANTHROPIC_API_KEY`를 쓰는 기능이 하나도 없다.)
 
 ## 다음 단계
 
