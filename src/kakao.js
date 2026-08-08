@@ -26,6 +26,32 @@ async function kakaoFetch(env, path, params) {
   return res.json();
 }
 
+/** 카카오모빌리티 길찾기(자동차 경로) - 집 주소 <-> 골프장 검색결과 거리/이동시간 계산용.
+ * dapi.kakao.com(Local API)과는 별도 base(apis-navi.kakaomobility.com)이지만 같은 REST API 키로 호출된다
+ * (별도 활용신청/제품 등록 없이 실제 호출로 확인됨). 경로를 못 찾는 경우(고속도로 미개통 지역 등)엔
+ * null을 돌려주고 호출부에서 조용히 생략하게 한다 - 거리/시간은 부가정보라 실패해도 검색 자체는 막지 않는다. */
+export async function fetchDrivingRoute(env, originLat, originLon, destLat, destLon) {
+  if (!env.KAKAO_API_KEY) return null;
+  const url = new URL('https://apis-navi.kakaomobility.com/v1/directions');
+  url.searchParams.set('origin', `${originLon},${originLat}`);
+  url.searchParams.set('destination', `${destLon},${destLat}`);
+  try {
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `KakaoAK ${env.KAKAO_API_KEY}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const summary = data?.routes?.[0]?.summary;
+    if (!summary || data.routes[0].result_code !== 0) return null;
+    return {
+      distanceKm: Math.round((summary.distance / 1000) * 10) / 10,
+      durationMin: Math.round(summary.duration / 60),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function mapPlace(d) {
   return {
     name: d.place_name,

@@ -6,7 +6,7 @@ import { listCourses, addCourse, updateCourse, deleteCourse } from './courses.js
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
-import { searchPlaces, kakaoMapDirectionsUrl } from './kakao.js';
+import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute } from './kakao.js';
 import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
@@ -111,7 +111,23 @@ export default {
       if (pathname === '/api/places/search' && method === 'GET') {
         const query = url.searchParams.get('query');
         if (!query) return error('query 쿼리 파라미터가 필요합니다');
-        return json({ places: await searchPlaces(env, query) });
+        const places = await searchPlaces(env, query);
+        // 집 주소가 설정돼 있으면 각 검색결과까지의 자동차 거리/이동시간을 함께 내려준다
+        // (골프장 즐겨찾기 추가 시 후보 비교용) - 실패해도 검색 자체는 막지 않는다.
+        const settings = await getSettings(env);
+        if (settings.homeLat != null && settings.homeLon != null) {
+          await Promise.all(
+            places.map(async (p) => {
+              if (p.lat == null || p.lon == null) return;
+              const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, p.lat, p.lon);
+              if (route) {
+                p.driveDistanceKm = route.distanceKm;
+                p.driveDurationMin = route.durationMin;
+              }
+            })
+          );
+        }
+        return json({ places });
       }
 
       // ===== 문화체육관광부 전국 골프장 현황(공식 DB) =====
