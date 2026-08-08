@@ -83,7 +83,8 @@ npm run deploy
 | POST | `/api/vision/recognize` | 이미지 인식 (`context`: scorecard/voicecaddie/smartscore/receipt) — 구조화 데이터 추출 |
 | GET | `/api/settings` | 개인 설정(집 주소 좌표) 조회 |
 | PUT | `/api/settings` | 개인 설정 수정 |
-| GET | `/api/places/search?query=` | 카카오 키워드 장소 검색 (골프장 등록 자동완성) |
+| GET | `/api/places/search?query=` | 카카오 키워드 장소 검색 (골프장 등록 자동완성). 집 주소가 설정돼 있으면 각 결과에 자동차 거리/이동시간(driveDistanceKm/driveDurationMin)도 함께 내려줌 |
+| GET | `/api/homepage-search?query=` | 카카오 웹검색으로 골프장 홈페이지 URL 후보 목록(제목/URL) 반환 - 1등 결과가 공식 사이트가 아닌 경우가 흔해 자동 채움 대신 후보만 제공 |
 | GET | `/api/golf-db?region=&type=` | 문체부 전국 골프장 현황 목록 (지역/구분 필터) |
 | GET | `/api/golf-db/search?query=&region=&type=` | 위 DB 이름 검색 (골프장 등록 자동완성용) |
 | GET | `/api/golf-db/regions` | 지역별 건수 (탐색 화면 드롭다운용) |

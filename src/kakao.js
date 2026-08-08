@@ -26,6 +26,28 @@ async function kakaoFetch(env, path, params) {
   return res.json();
 }
 
+const HTML_TAG_RE = /<\/?[a-z]+>/gi;
+
+/** 골프장 홈페이지 URL 후보 검색 (카카오 웹검색). 실제 캡처로 확인해보니 1등 결과가 골프장 공식
+ * 사이트가 아니라 후기 블로그/코스 소개 사이트인 경우가 흔해서(예: "코리아컨트리클럽" 검색 시
+ * heyjayboy.com 같은 후기 사이트가 1등) 자동으로 하나를 골라 채워넣지 않고, 후보 목록을 그대로
+ * 돌려줘서 프론트에서 사용자가 직접 고르게 한다 - 잘못된 사이트를 자동으로 넣는 것보단 안전하다. */
+export async function searchHomepageCandidates(env, courseName) {
+  if (!env.KAKAO_API_KEY) return [];
+  const url = new URL('https://dapi.kakao.com/v2/search/web');
+  url.searchParams.set('query', `${courseName} 홈페이지`);
+  url.searchParams.set('size', '5');
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `KakaoAK ${env.KAKAO_API_KEY}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.documents || []).map((d) => ({
+    title: (d.title || '').replace(HTML_TAG_RE, ''),
+    url: d.url,
+  }));
+}
+
 /** 카카오모빌리티 길찾기(자동차 경로) - 집 주소 <-> 골프장 검색결과 거리/이동시간 계산용.
  * dapi.kakao.com(Local API)과는 별도 base(apis-navi.kakaomobility.com)이지만 같은 REST API 키로 호출된다
  * (별도 활용신청/제품 등록 없이 실제 호출로 확인됨). 경로를 못 찾는 경우(고속도로 미개통 지역 등)엔

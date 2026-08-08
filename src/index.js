@@ -6,7 +6,7 @@ import { listCourses, addCourse, updateCourse, deleteCourse } from './courses.js
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
-import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute } from './kakao.js';
+import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute, searchHomepageCandidates } from './kakao.js';
 import { recognizeImage } from './vision.js';
 import { searchGolfpangRounds } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
@@ -128,6 +128,11 @@ export default {
           );
         }
         return json({ places });
+      }
+      if (pathname === '/api/homepage-search' && method === 'GET') {
+        const query = url.searchParams.get('query');
+        if (!query) return error('query 쿼리 파라미터가 필요합니다');
+        return json({ results: await searchHomepageCandidates(env, query) });
       }
 
       // ===== 문화체육관광부 전국 골프장 현황(공식 DB) =====
