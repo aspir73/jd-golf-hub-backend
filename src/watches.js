@@ -31,6 +31,11 @@ async function saveWatches(env, watches) {
 // '조인/백업' 매물만, 카카오골프예약은 조인 탭 조건검색과 동일하게 제외).
 const ALLOWED_MODES = ['booking', 'join'];
 
+// 캐디타입 표준키 → 골팡 cdOrder 값(index.html의 NORMALIZED_CADDY와 동일하게 유지 - 프론트
+// 조건검색 캐디 칩과 워치 등록 다이얼로그의 캐디 칩이 같은 값을 쓴다).
+export const WATCH_CADDY_TO_GOLFPANG = { general: '0', drive: '1', intern: '3', none: '2' };
+const ALLOWED_CADDY_TYPES = Object.keys(WATCH_CADDY_TO_GOLFPANG);
+
 function normalizeWatch(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -39,6 +44,7 @@ function normalizeWatch(input, existing = {}) {
     region: input.region ?? existing.region ?? '',
     date: input.date ?? existing.date ?? '',
     timeOfDay: Array.isArray(input.timeOfDay) ? input.timeOfDay : existing.timeOfDay || [],
+    caddyType: ALLOWED_CADDY_TYPES.includes(input.caddyType) ? input.caddyType : existing.caddyType || 'general',
     mode: ALLOWED_MODES.includes(input.mode) ? input.mode : existing.mode || 'booking',
     active: input.active != null ? Boolean(input.active) : existing.active ?? true,
     createdAt: existing.createdAt || now,
@@ -142,15 +148,13 @@ async function fetchWatchResults(env, watch) {
     ? [...new Set(normKeys.map((k) => NORMALIZED_REGION_CODES[k].golfpang))]
     : [''];
   const golfpangMode = watch.mode === 'join' ? 'join' : 'booking';
-  // 부킹/조인 탭 조건검색은 캐디 칩 기본값이 "일반캐디"라 골팡 cdOrder=0으로 항상 필터링해서
-  // 보여준다(index.html의 NORMALIZED_CADDY.general.golfpang와 동일 값) - 워치도 캐디타입을
-  // 안 넘기면(=전체 캐디, 노캐디/운전캐디/인턴캐디까지 포함) 탭에서 기본 검색했을 때 안 보이는
-  // 매물까지 잡아내서 "워치 결과가 검색과 다르다"는 걸로 보였다. 탭의 기본 검색과 같은 조건으로
-  // 맞춘다.
-  const WATCH_GOLFPANG_CADDY_TYPE = '0';
+  // 워치 등록 시 고른 캐디 옵션(기본값 "일반캐디")을 그대로 써서 탭 조건검색과 동일한 조건으로
+  // 맞춘다 - 예전엔 캐디타입을 아예 안 넘겨서(=전체 캐디) 탭 기본 검색(일반캐디만)엔 안 보이는
+  // 매물까지 워치 결과에 섞여 "워치 결과가 검색과 다르다"는 문제가 있었다.
+  const golfpangCaddyType = WATCH_CADDY_TO_GOLFPANG[watch.caddyType] || WATCH_CADDY_TO_GOLFPANG.general;
   for (const sector of golfpangSectors) {
     try {
-      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode, caddyType: WATCH_GOLFPANG_CADDY_TYPE });
+      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode, caddyType: golfpangCaddyType });
       rounds
         .filter((r) => courseNameMatches(r, watch) && matchesTimeOfDay(r.time, watch.timeOfDay))
         .forEach((r) => results.push({ source: '골팡', time: r.time, holes: r.holes, greenFee: r.greenFee }));
