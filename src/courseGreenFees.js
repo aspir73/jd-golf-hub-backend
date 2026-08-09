@@ -19,9 +19,21 @@ function dateStrForOffset(offset) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** normalizeCourseName은 괄호 안 내용을 통째로 지우는데("코리아(P9)" -> "코리아"), 이게 항상
+ * 안전하지는 않다 - "(회원제)"처럼 그냥 부가설명인 경우도 있지만, "(P9)"처럼 실제로는 완전히
+ * 다른 상품(9홀 퍼블릭 코스 - 회원제 골프장인 "코리아컨트리클럽"과는 무관)을 가리키는 구분자인
+ * 경우도 있다. 후자를 구분 못 하고 괄호를 지운 채 비교하면 kakaogolf.js 자체의 officialName
+ * 매칭(역시 같은 normalizeCourseName을 씀)도 잘못 매칭돼서, 실제로 "코리아컨트리클럽" 자리에
+ * 전혀 무관한 "코리아(P9)" 퍼블릭 코스 요금이 뜨는 사고가 있었다. 그래서 원본 이름에 괄호가
+ * 있으면, 등록해둔 골프장 이름 자체에도 같은 괄호 내용이 문자 그대로 포함돼 있을 때만("회원제"
+ * 처럼) 같은 곳으로 인정하고, 낯선 구분자면(P9 등) 매칭을 포기한다(빈 값이 틀린 값보다 낫다). */
 function courseNameMatches(row, course) {
+  const rawName = row.courseName || '';
+  const parenMatch = rawName.match(/\(([^)]+)\)/);
+  if (parenMatch && !course.name.includes(parenMatch[1])) return false;
+
   if (row.officialName && row.officialName === course.name) return true;
-  const norm = normalizeCourseName(row.courseName || '');
+  const norm = normalizeCourseName(rawName);
   const target = normalizeCourseName(course.name);
   return Boolean(norm && target && norm === target);
 }
