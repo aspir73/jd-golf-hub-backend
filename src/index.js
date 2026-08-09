@@ -8,7 +8,7 @@ import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from '
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
 import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute, searchHomepageCandidates } from './kakao.js';
-import { searchGolfpangRounds } from './golfpang.js';
+import { searchGolfpangRoundsAllPages } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
 import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
 import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
@@ -252,6 +252,9 @@ export default {
       }
 
       // ===== 골프장 조건검색 (골팡 비로그인 조회 프록시) =====
+      // 사용자가 직접 누르는 단발성 검색이라(크론 배치와 달리 서브리퀘스트 예산 여유가 넉넉함)
+      // 페이지 1개(최대 100건)만 보지 않고 최대 15페이지(1,500건)까지 끝까지 훑는다 - 안 그러면
+      // 매물 많은 지역/날짜에서 특정 골프장이 페이지 1 밖에 있어 검색에 아예 안 잡히는 문제가 있다.
       if (pathname === '/api/golfpang/search' && method === 'GET') {
         const date = url.searchParams.get('date');
         const ampm = url.searchParams.get('ampm') || '';
@@ -259,7 +262,7 @@ export default {
         const mode = url.searchParams.get('mode') === 'join' ? 'join' : 'booking';
         const caddyType = url.searchParams.get('caddyType') || '';
         if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
-        return json(await searchGolfpangRounds(env, { date, ampm, sector, mode, caddyType }));
+        return json(await searchGolfpangRoundsAllPages(env, { date, ampm, sector, mode, caddyType }, 15));
       }
 
       // ===== 골프장 조건검색 (골프몬 비로그인 조회 프록시) =====
@@ -420,7 +423,10 @@ export default {
       }
       const watchRefreshMatch = pathname.match(/^\/api\/watches\/([^/]+)\/refresh$/);
       if (watchRefreshMatch && method === 'POST') {
-        const record = await refreshWatch(env, watchRefreshMatch[1]);
+        // 사용자가 직접 누른 단발성 새로고침이라(크론 배치와 달리 서브리퀘스트 예산 여유가
+        // 넉넉함) 골팡 검색을 페이지 1개만 보지 않고 최대 10페이지까지 훑어서 정확한 결과를
+        // 준다 - 크론 자동 갱신(refreshAllWatches)은 여전히 페이지 1만 본다.
+        const record = await refreshWatch(env, watchRefreshMatch[1], { maxGolfpangPages: 10 });
         if (!record) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ watch: record });
       }

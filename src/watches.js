@@ -5,7 +5,7 @@
 // "앱 내에서만 확인" 방식을 선택함). 새로 생긴 시간대는 isNew로 표시해서 화면에서 강조할 수 있다.
 
 import { findBestMatch, normalizeCourseName } from './golfCourseDB.js';
-import { searchGolfpangRounds } from './golfpang.js';
+import { searchGolfpangRoundsAllPages } from './golfpang.js';
 import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
 import { DB_REGION_TO_NORMALIZED, NORMALIZED_REGION_CODES } from './regionMap.js';
 
@@ -140,7 +140,7 @@ function courseNameMatches(row, watch) {
  * 바로 오지만, 카카오골프예약은 먼저 골프장 단위 요약에서 golfInfoSeq를 찾은 뒤 상세조회를 한 번
  * 더 호출해야 실제 시간대가 나온다. 어느 한쪽이 실패해도 나머지 쪽 결과는 살리기 위해 각각
  * try/catch로 조용히 건너뛴다 - 워치 갱신 전체가 외부 API 하나 때문에 막히면 안 된다. */
-async function fetchWatchResults(env, watch) {
+async function fetchWatchResults(env, watch, { maxGolfpangPages = 1 } = {}) {
   const normKeys = DB_REGION_TO_NORMALIZED[watch.region] || [];
   const results = [];
 
@@ -152,14 +152,28 @@ async function fetchWatchResults(env, watch) {
   // 맞춘다 - 예전엔 캐디타입을 아예 안 넘겨서(=전체 캐디) 탭 기본 검색(일반캐디만)엔 안 보이는
   // 매물까지 워치 결과에 섞여 "워치 결과가 검색과 다르다"는 문제가 있었다.
   const golfpangCaddyType = WATCH_CADDY_TO_GOLFPANG[watch.caddyType] || WATCH_CADDY_TO_GOLFPANG.general;
+  // watch.timeOfDay 값(am/pm/nt) 자체가 골팡 ampm 파라미터 코드와 동일해서 그대로 넘길 수
+  // 있다(index.html의 NORMALIZED_TIME_OF_DAY[t].golfpangAmpm과 같은 값). 예전엔 골팡에
+  // ampm을 안 넘기고 전체 시간대를 받아서 우리가 만든 시간 범위(TIME_OF_DAY_RANGES)로
+  // 직접 다시 걸렀는데, 그 경계가 골팡이 실제로 쓰는 "야간" 기준(17시가 아니라 16시대부터
+  // 시작 - 실측 확인됨)과 달라서 "조인 조건검색은 8건인데 워치는 5건"처럼 검색과 결과가
+  // 달라 보이는 문제가 있었다. ampm을 그대로 넘겨 골팡 서버가 매기는 기준을 그대로 믿는
+  // 쪽으로 바꿔서 조건검색과 완전히 같은 기준이 되게 한다(전체 시간대면 ampm='').
+  const ampms = watch.timeOfDay.length ? watch.timeOfDay : [''];
   for (const sector of golfpangSectors) {
-    try {
-      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode, caddyType: golfpangCaddyType });
-      rounds
-        .filter((r) => courseNameMatches(r, watch) && matchesTimeOfDay(r.time, watch.timeOfDay))
-        .forEach((r) => results.push({ source: '골팡', time: r.time, holes: r.holes, greenFee: r.greenFee }));
-    } catch {
-      // 골팡 조회 실패 - 조용히 건너뜀(카카오 쪽이라도 남기기 위해)
+    for (const ampm of ampms) {
+      try {
+        // maxGolfpangPages=1(크론 배치)이면 예전처럼 페이지 1만 보고, 사용자가 직접 "지금
+        // 새로고침"을 눌렀을 때(refreshWatch 호출부 참고)는 여러 페이지까지 훑어서 매물 많은
+        // 지역/날짜에서도 그 골프장 매물을 놓치지 않는다("조인 조건검색은 8건인데 워치는 1건"
+        // 처럼 검색과 결과가 달라 보이던 문제 - 둘 다 페이지 1만 보던 게 원인이었음).
+        const { rounds } = await searchGolfpangRoundsAllPages(env, { date: watch.date, sector, ampm, mode: golfpangMode, caddyType: golfpangCaddyType }, maxGolfpangPages);
+        rounds
+          .filter((r) => courseNameMatches(r, watch))
+          .forEach((r) => results.push({ source: '골팡', time: r.time, holes: r.holes, greenFee: r.greenFee }));
+      } catch {
+        // 골팡 조회 실패 - 조용히 건너뜀(카카오 쪽이라도 남기기 위해)
+      }
     }
   }
 
@@ -190,15 +204,17 @@ async function fetchWatchResults(env, watch) {
 }
 
 /** 워치 하나를 재검색하고 결과를 KV에 반영한다. 직전 결과에 없던 시간대는 isNew:true로 표시해서
- * 화면에서 "새로 생긴 자리"를 강조할 수 있게 한다. */
-export async function refreshWatch(env, watchId) {
+ * 화면에서 "새로 생긴 자리"를 강조할 수 있게 한다. maxGolfpangPages: 크론 배치(refreshAllWatches)는
+ * 서브리퀘스트 예산 때문에 1(페이지 1만)로 부르고, 사용자가 "🔄 지금 새로고침"을 직접 눌렀을 때는
+ * index.js에서 더 큰 값으로 불러서 정확한 결과를 준다. */
+export async function refreshWatch(env, watchId, { maxGolfpangPages = 1 } = {}) {
   const watches = await listWatches(env);
   const idx = watches.findIndex((w) => w.id === watchId);
   if (idx === -1) return null;
   const watch = watches[idx];
   const previousKeys = new Set((watch.lastResults || []).map((r) => `${r.source}:${r.time}`));
   try {
-    const results = await fetchWatchResults(env, watch);
+    const results = await fetchWatchResults(env, watch, { maxGolfpangPages });
     watch.lastResults = results.map((r) => ({ ...r, isNew: !previousKeys.has(`${r.source}:${r.time}`) }));
     watch.lastError = null;
   } catch (e) {

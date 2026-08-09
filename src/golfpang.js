@@ -94,15 +94,17 @@ function parseRoundRows(html) {
   return rows;
 }
 
-/** mode: 'booking'(본인예약) | 'join'(조인/백업) */
-export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking', caddyType = '' }) {
+/** mode: 'booking'(본인예약) | 'join'(조인/백업). page: 골팡 응답이 한 번에 최대 100건만 주기
+ * 때문에(총 매물이 수백~천 건대로 많은 지역/날짜도 흔함) 그 이상을 보려면 페이지를 넘겨가며 여러
+ * 번 불러야 한다 - searchGolfpangRoundsAllPages 참고. */
+export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking', caddyType = '', page = 1 }) {
   if (!date) throw new Error('date(YYYY-MM-DD)가 필요합니다');
   const isJoin = mode === 'join';
   const endpoint = isJoin ? 'join_tblList.do' : 'booking_tblList.do';
   const refererPage = isJoin ? 'join_list.do' : 'booking_list.do';
 
   const body = new URLSearchParams({
-    pageNum: '1',
+    pageNum: String(page),
     bkOrder: '',
     rd_date: date,
     ampm,
@@ -140,4 +142,23 @@ export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', 
     totalCount: parseTotalCount(html),
     rounds: parseRoundRows(html),
   };
+}
+
+/** searchGolfpangRounds를 페이지 1부터 순서대로 불러서 합친다 - 인기 지역/날짜는 총 매물이
+ * 수백~천 건대라 페이지 1(최대 100건)만 보면 특정 골프장이 아예 안 보일 수 있다(실제로 "조인
+ * 조건검색에서는 8건 나오는데 워치는 1건만 나온다"는 사용자 리포트로 확인된 문제 - 워치·검색
+ * 둘 다 page=1 고정이라 매물이 많으면 요청마다 골팡 서버의 기본 정렬 순서상 다른 부분만 잘려
+ * 보였던 것). 마지막 페이지(응답이 100건 미만)를 만나거나 maxPages에 도달하면 멈춘다. */
+export async function searchGolfpangRoundsAllPages(env, params, maxPages = 1) {
+  let mode = params.mode === 'join' ? 'join' : 'booking';
+  let totalCount = null;
+  const rounds = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await searchGolfpangRounds(env, { ...params, page });
+    mode = result.mode;
+    if (totalCount == null) totalCount = result.totalCount;
+    rounds.push(...result.rounds);
+    if (result.rounds.length < 100) break; // 마지막 페이지
+  }
+  return { mode, totalCount, rounds };
 }
