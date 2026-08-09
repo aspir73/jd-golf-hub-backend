@@ -232,7 +232,9 @@ export default {
         }
         const timing = url.searchParams.get('timing') || undefined;
         const keyword = url.searchParams.get('keyword') || undefined;
-        const restaurants = await searchRestaurants(env, { lat, lon, timing, keyword });
+        const radiusParam = Number(url.searchParams.get('radius'));
+        const radius = Number.isFinite(radiusParam) && radiusParam > 0 ? radiusParam : undefined;
+        const restaurants = await searchRestaurants(env, { lat, lon, timing, keyword, radius });
         return json({
           restaurants: restaurants.map((r) => ({ ...r, directionsUrl: kakaoMapDirectionsUrl(r.name, r.lat, r.lon) })),
         });
