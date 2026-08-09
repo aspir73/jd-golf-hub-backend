@@ -2,6 +2,11 @@ name = "jd-golf-hub-backend"
 main = "src/index.js"
 compatibility_date = "2026-07-01"
 
+# 티타임 워치(핵심 MVP) - 30분마다 활성 워치를 백그라운드에서 재검색(src/watches.js
+# refreshAllWatches, index.js scheduled 핸들러). 무료 플랜에서도 cron trigger는 지원됨.
+[triggers]
+crons = ["*/30 * * * *"]
+
 # 1. KV 네임스페이스 바인딩 (스코어 기록, 동반자, 즐겨찾기 골프장, 정산 기록, 설정 등
 #    실시간성이 중요한 가벼운 데이터 전부. 무거운 원본 사진/백업은 NAS(추후 Cloudflare Tunnel)로 분리)
 # 생성: wrangler kv namespace create GOLF_KV

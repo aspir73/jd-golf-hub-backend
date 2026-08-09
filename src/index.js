@@ -15,6 +15,7 @@ import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
 import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
+import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches } from './watches.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -350,9 +351,42 @@ export default {
         return json(result);
       }
 
+      // ===== 티타임 워치(핵심 MVP) - 특정 골프장+날짜(+시간대)를 지정해두면 Cron이 30분마다
+      // 백그라운드에서 재검색해서 결과를 KV에 저장. /refresh는 사용자가 앱에서 "지금 새로고침"을
+      // 눌렀을 때 크론을 기다리지 않고 즉시 재검색하는 용도. =====
+      if (pathname === '/api/watches' && method === 'GET') {
+        return json({ watches: await listWatches(env) });
+      }
+      if (pathname === '/api/watches' && method === 'POST') {
+        const record = await addWatch(env, await request.json());
+        return json({ watch: record }, 201);
+      }
+      const watchMatch = pathname.match(/^\/api\/watches\/([^/]+)$/);
+      if (watchMatch && method === 'PUT') {
+        const record = await updateWatch(env, watchMatch[1], await request.json());
+        if (!record) return error('해당 워치를 찾을 수 없습니다', 404);
+        return json({ watch: record });
+      }
+      if (watchMatch && method === 'DELETE') {
+        const ok = await deleteWatch(env, watchMatch[1]);
+        if (!ok) return error('해당 워치를 찾을 수 없습니다', 404);
+        return json({ deleted: true });
+      }
+      const watchRefreshMatch = pathname.match(/^\/api\/watches\/([^/]+)\/refresh$/);
+      if (watchRefreshMatch && method === 'POST') {
+        const record = await refreshWatch(env, watchRefreshMatch[1]);
+        if (!record) return error('해당 워치를 찾을 수 없습니다', 404);
+        return json({ watch: record });
+      }
+
       return error('Not found', 404);
     } catch (err) {
       return error(err.message || String(err), 500);
     }
+  },
+
+  // Cloudflare Cron Trigger(wrangler.toml [triggers] crons) - 30분마다 활성 워치를 전부 재검색.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(refreshAllWatches(env));
   },
 };
