@@ -16,7 +16,7 @@ import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
 import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
-import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches } from './watches.js';
+import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -399,6 +399,13 @@ export default {
         if (!Array.isArray(items) || !items.length) return error('items 배열이 필요합니다', 400);
         const added = await bulkAddWatches(env, items);
         return json({ watches: added }, 201);
+      }
+      // 여러 워치를 한 번에 삭제("선택 삭제"/"전체 삭제") - DELETE 메서드는 바디 지원이 애매해서 POST로.
+      if (pathname === '/api/watches/bulk-delete' && method === 'POST') {
+        const { ids } = await request.json();
+        if (!Array.isArray(ids) || !ids.length) return error('ids 배열이 필요합니다', 400);
+        const deletedCount = await bulkDeleteWatches(env, ids);
+        return json({ deletedCount });
       }
       const watchMatch = pathname.match(/^\/api\/watches\/([^/]+)$/);
       if (watchMatch && method === 'PUT') {

@@ -96,6 +96,17 @@ export async function deleteWatch(env, id) {
   return changed;
 }
 
+/** 여러 워치를 한 번에 지울 때("선택 삭제"/"전체 삭제") 쓴다 - bulkAddWatches와 같은 이유로
+ * (KV 읽기-쓰기 레이스 컨디션 방지) 배치 전체를 KV 읽기 1번/쓰기 1번으로 처리한다. */
+export async function bulkDeleteWatches(env, ids) {
+  const watches = await listWatches(env);
+  const idSet = new Set(ids);
+  const next = watches.filter((w) => !idSet.has(w.id));
+  const deletedCount = watches.length - next.length;
+  if (deletedCount > 0) await saveWatches(env, next);
+  return deletedCount;
+}
+
 function timeToMinutes(timeStr) {
   const m = (timeStr || '').match(/^(\d{1,2}):(\d{2})/);
   if (!m) return null;
