@@ -3,6 +3,7 @@ import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
 import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses } from './courses.js';
+import { resolveWeekGreenFees } from './courseGreenFees.js';
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
@@ -182,6 +183,12 @@ export default {
         if (!Array.isArray(orderedIds)) return error('orderedIds(배열)가 필요합니다');
         const courses = await reorderCourses(env, orderedIds);
         return json({ courses });
+      }
+      // MY골프장 카드의 "향후 7일 요일별 최저 그린피" - 즐겨찾기 전체를 지역별로 묶어 한 번에 조회
+      if (pathname === '/api/courses/week-greenfees' && method === 'GET') {
+        const courses = await listCourses(env);
+        const greenFees = await resolveWeekGreenFees(env, courses);
+        return json({ greenFees });
       }
 
       // ===== 동반자 =====
