@@ -412,3 +412,91 @@ export async function fetchMidTermWeather(env, lat, lon, date) {
 
   return { region: region.label, tmFc, date: targetStr, periods, tempMin: ta?.min ?? null, tempMax: ta?.max ?? null, outfit };
 }
+
+function addDaysToDateStr(dateStr, days) {
+  const y = Number(dateStr.slice(0, 4)), m = Number(dateStr.slice(4, 6)) - 1, d = Number(dateStr.slice(6, 8));
+  const dt = new Date(Date.UTC(y, m, d + days));
+  return `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+function toIsoDate(dateStr) {
+  return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
+}
+
+/** 오늘부터 +6일(총 7일)치 일별 요약(최저/최고기온, 대표 하늘상태)만 가볍게 반환한다. MY골프장
+ * 카드처럼 여러 골프장을 한 번에 훑어야 하는 곳에서 fetchWeather/fetchMidTermWeather를 날짜별로
+ * 7번씩 부르면 API 호출이 너무 많아지므로, 단기예보 1콜 + 중기예보 1콜(land+ta 동시라 사실상
+ * 2콜)로 7일치를 한 번에 만든다. 중기예보 쪽이 실패해도(권역 해석 실패 등) 단기예보로 채운
+ * 0~2일치는 그대로 살려서 돌려준다. */
+export async function fetchWeekAheadWeather(env, lat, lon) {
+  if (!env.KMA_API_KEY) {
+    throw new Error('KMA_API_KEY가 설정되지 않았습니다 (wrangler secret put KMA_API_KEY)');
+  }
+  const { nx, ny } = latLonToGrid(lat, lon);
+  const { base_date, base_time } = resolveBaseDateTime();
+  const todayStr = kstTodayString();
+
+  const url = new URL(KMA_ENDPOINT);
+  url.searchParams.set('serviceKey', env.KMA_API_KEY);
+  url.searchParams.set('numOfRows', '1000');
+  url.searchParams.set('pageNo', '1');
+  url.searchParams.set('dataType', 'JSON');
+  url.searchParams.set('base_date', base_date);
+  url.searchParams.set('base_time', base_time);
+  url.searchParams.set('nx', String(nx));
+  url.searchParams.set('ny', String(ny));
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`기상청 API 호출 실패: HTTP ${res.status}`);
+  const data = await res.json();
+  const header = data?.response?.header;
+  if (!header || header.resultCode !== '00') throw new Error(`기상청 API 오류: ${header?.resultMsg || '알 수 없는 오류'}`);
+  const items = data.response.body?.items?.item || [];
+
+  const days = [];
+  for (let offset = 0; offset <= 2; offset++) {
+    const dateStr = addDaysToDateStr(todayStr, offset);
+    const hourly = groupByHour(items, dateStr);
+    if (!hourly.length) continue;
+    const temps = hourly.map((h) => h.temp).filter((v) => v != null);
+    const midHour = hourly[Math.floor(hourly.length / 2)];
+    days.push({
+      date: toIsoDate(dateStr),
+      dayOffset: offset,
+      tempMin: temps.length ? Math.min(...temps) : null,
+      tempMax: temps.length ? Math.max(...temps) : null,
+      sky: midHour?.pty && midHour.pty !== '없음' ? midHour.pty : (midHour?.sky || '-'),
+    });
+  }
+
+  try {
+    const tmFc = resolveMidTmFc(new Date());
+    const region = await resolveMidRegion(env, lat, lon);
+    const [landItem, taItem] = await Promise.all([
+      fetchMidRaw(env, MID_LAND_ENDPOINT, region.landRegId, tmFc),
+      fetchMidRaw(env, MID_TA_ENDPOINT, region.taRegId, tmFc),
+    ]);
+    const landByDay = parseMidLandItem(landItem);
+    const taByDay = new Map(parseMidTaItem(taItem).map((t) => [t.dayOffset, t]));
+    for (let offset = 3; offset <= 6; offset++) {
+      const wantedDateStr = addDaysToDateStr(todayStr, offset);
+      const midDateStr = midDayOffsetToDate(tmFc, offset);
+      // 중기예보 dayOffset은 "발표시각(tmFc) 기준" +N일이라 오늘 기준 +N일과 살짝 어긋날 수 있다 -
+      // 실제 날짜로 다시 맞춰봐서 안 맞으면(발표 시점 오차) 조용히 건너뛴다.
+      if (midDateStr !== wantedDateStr) continue;
+      const ta = taByDay.get(offset);
+      const landEntries = landByDay.filter((e) => e.dayOffset === offset);
+      const repSky = landEntries.find((e) => e.ampm === 'pm')?.sky ?? landEntries[0]?.sky ?? '-';
+      days.push({
+        date: toIsoDate(wantedDateStr),
+        dayOffset: offset,
+        tempMin: ta?.min ?? null,
+        tempMax: ta?.max ?? null,
+        sky: repSky,
+      });
+    }
+  } catch {
+    // 중기예보 실패해도 단기예보(0~2일)까지는 살려서 돌려준다
+  }
+
+  return { days: days.sort((a, b) => a.dayOffset - b.dayOffset) };
+}

@@ -1,4 +1,4 @@
-import { fetchWeather, fetchMidTermWeather } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -64,6 +64,17 @@ export default {
         }
         const date = url.searchParams.get('date') || undefined;
         return json(await fetchMidTermWeather(env, lat, lon, date));
+      }
+
+      // 오늘부터 +6일(7일)치 요약 - MY골프장 카드처럼 날짜별로 여러 번 조회하기엔 API 호출이
+      // 많아지는 곳에서 한 번에 쓰는 용도
+      if (pathname === '/api/weather/week' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          return error('lat, lon 쿼리 파라미터가 필요합니다');
+        }
+        return json(await fetchWeekAheadWeather(env, lat, lon));
       }
 
       // ===== 스코어 =====

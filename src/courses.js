@@ -1,5 +1,5 @@
 // 골프장 마스터 DB(즐겨찾기) KV CRUD. 개인 규모라 단일 JSON 배열로 저장 (기획서 3-1 골프장 마스터 DB 구조 참고).
-import { distanceKm, coordToRegion } from './kakao.js';
+import { coordToRegion, fetchDrivingRoute } from './kakao.js';
 import { getSettings } from './settings.js';
 
 const COURSES_KEY = 'courses';
@@ -30,12 +30,30 @@ async function backfillRegion(env, record) {
   return false;
 }
 
+/** homeDurationMin이 없는데 좌표+집 주소는 있는 기존 즐겨찾기(자동차 길찾기 도입 전에 등록됐거나,
+ * 예전 직선거리 방식으로만 채워졌던 것들)를 실제 자동차 경로(거리+시간)로 다시 채운다. */
+async function backfillHomeTravelInfo(env, record) {
+  if (record.homeDurationMin != null || record.lat == null || record.lon == null) return false;
+  try {
+    const settings = await getSettings(env);
+    if (settings.homeLat == null || settings.homeLon == null) return false;
+    const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
+    if (!route) return false;
+    record.homeDistanceKm = route.distanceKm;
+    record.homeDurationMin = route.durationMin;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function listCourses(env) {
   const raw = await env.GOLF_KV.get(COURSES_KEY, 'json');
   const courses = raw || [];
   let changed = false;
   for (const c of courses) {
     if (await backfillRegion(env, c)) changed = true;
+    if (await backfillHomeTravelInfo(env, c)) changed = true;
   }
   if (changed) await saveCourses(env, courses);
   return courses;
@@ -45,13 +63,17 @@ async function saveCourses(env, courses) {
   await env.GOLF_KV.put(COURSES_KEY, JSON.stringify(courses));
 }
 
+/** 집~골프장 자동차 거리/이동시간을 카카오모빌리티 길찾기로 계산해서 채운다(직선거리 근사 대신
+ * 실제 도로 기준 - bookings.js의 resolveCourseTravelInfo와 같은 방식). */
 async function withHomeDistance(env, record) {
   if (record.lat == null || record.lon == null) return record;
   const settings = await getSettings(env);
   if (settings.homeLat == null || settings.homeLon == null) return record;
+  const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
   return {
     ...record,
-    homeDistanceKm: distanceKm(settings.homeLat, settings.homeLon, record.lat, record.lon),
+    homeDistanceKm: route?.distanceKm ?? record.homeDistanceKm ?? null,
+    homeDurationMin: route?.durationMin ?? record.homeDurationMin ?? null,
   };
 }
 
@@ -77,6 +99,7 @@ function normalizeCourse(input, existing = {}) {
     },
     memo: input.memo ?? existing.memo ?? '',
     homeDistanceKm: existing.homeDistanceKm ?? null,
+    homeDurationMin: existing.homeDurationMin ?? null,
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };
