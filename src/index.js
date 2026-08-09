@@ -410,18 +410,18 @@ export default {
       const watchMatch = pathname.match(/^\/api\/watches\/([^/]+)$/);
       if (watchMatch && method === 'PUT') {
         const record = await updateWatch(env, watchMatch[1], await request.json());
-        if (!record) return error('해당 워치를 찾을 수 없습니다', 404);
+        if (!record) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ watch: record });
       }
       if (watchMatch && method === 'DELETE') {
         const ok = await deleteWatch(env, watchMatch[1]);
-        if (!ok) return error('해당 워치를 찾을 수 없습니다', 404);
+        if (!ok) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ deleted: true });
       }
       const watchRefreshMatch = pathname.match(/^\/api\/watches\/([^/]+)\/refresh$/);
       if (watchRefreshMatch && method === 'POST') {
         const record = await refreshWatch(env, watchRefreshMatch[1]);
-        if (!record) return error('해당 워치를 찾을 수 없습니다', 404);
+        if (!record) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ watch: record });
       }
 
