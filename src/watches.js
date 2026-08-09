@@ -27,6 +27,10 @@ async function saveWatches(env, watches) {
   await env.GOLF_KV.put(WATCHES_KEY, JSON.stringify(watches));
 }
 
+// mode: 'booking'(부킹 탭 - 골팡 '부킹' 매물 + 카카오골프예약도 포함) | 'join'(조인 탭 - 골팡
+// '조인/백업' 매물만, 카카오골프예약은 조인 탭 조건검색과 동일하게 제외).
+const ALLOWED_MODES = ['booking', 'join'];
+
 function normalizeWatch(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -35,6 +39,7 @@ function normalizeWatch(input, existing = {}) {
     region: input.region ?? existing.region ?? '',
     date: input.date ?? existing.date ?? '',
     timeOfDay: Array.isArray(input.timeOfDay) ? input.timeOfDay : existing.timeOfDay || [],
+    mode: ALLOWED_MODES.includes(input.mode) ? input.mode : existing.mode || 'booking',
     active: input.active != null ? Boolean(input.active) : existing.active ?? true,
     createdAt: existing.createdAt || now,
     updatedAt: now,
@@ -55,6 +60,23 @@ export async function addWatch(env, input) {
   watches.push(record);
   await saveWatches(env, watches);
   return record;
+}
+
+/** MY골프장에서 여러 개를 한 번에 골라 워치로 등록할 때 사용 - courses.js의 bulkAddCourses와
+ * 같은 이유로(KV 읽기-쓰기 레이스 컨디션 방지) 배치 전체를 KV 읽기 1번/쓰기 1번으로 처리한다.
+ * items: [{courseName, region, date, timeOfDay, mode}] */
+export async function bulkAddWatches(env, items) {
+  const watches = await listWatches(env);
+  const added = [];
+  for (const item of items) {
+    if (!item.courseName || !item.date) continue;
+    const region = item.region || findBestMatch(item.courseName)?.region || '';
+    const record = normalizeWatch({ ...item, region });
+    watches.push(record);
+    added.push(record);
+  }
+  await saveWatches(env, watches);
+  return added;
 }
 
 export async function updateWatch(env, id, input) {
@@ -108,9 +130,10 @@ async function fetchWatchResults(env, watch) {
   const golfpangSectors = normKeys.length
     ? [...new Set(normKeys.map((k) => NORMALIZED_REGION_CODES[k].golfpang))]
     : [''];
+  const golfpangMode = watch.mode === 'join' ? 'join' : 'booking';
   for (const sector of golfpangSectors) {
     try {
-      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: 'booking' });
+      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode });
       rounds
         .filter((r) => courseNameMatches(r, watch) && matchesTimeOfDay(r.time, watch.timeOfDay))
         .forEach((r) => results.push({ source: '골팡', time: r.time, holes: r.holes, greenFee: r.greenFee }));
@@ -118,6 +141,9 @@ async function fetchWatchResults(env, watch) {
       // 골팡 조회 실패 - 조용히 건너뜀(카카오 쪽이라도 남기기 위해)
     }
   }
+
+  // 조인 탭 워치는 조인 탭 조건검색과 동일하게 카카오골프예약을 아예 제외한다.
+  if (watch.mode === 'join') return results.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
   try {
     const kakaoMajors = normKeys.length

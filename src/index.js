@@ -16,7 +16,7 @@ import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
 import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
-import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches } from './watches.js';
+import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches } from './watches.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -392,6 +392,13 @@ export default {
       if (pathname === '/api/watches' && method === 'POST') {
         const record = await addWatch(env, await request.json());
         return json({ watch: record }, 201);
+      }
+      // MY골프장에서 여러 개를 골라 한 번에 워치 등록(레이스 컨디션 방지 위해 배치 1건으로 처리).
+      if (pathname === '/api/watches/bulk' && method === 'POST') {
+        const { items } = await request.json();
+        if (!Array.isArray(items) || !items.length) return error('items 배열이 필요합니다', 400);
+        const added = await bulkAddWatches(env, items);
+        return json({ watches: added }, 201);
       }
       const watchMatch = pathname.match(/^\/api\/watches\/([^/]+)$/);
       if (watchMatch && method === 'PUT') {

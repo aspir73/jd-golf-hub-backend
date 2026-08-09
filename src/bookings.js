@@ -8,8 +8,9 @@ const BOOKINGS_KEY = 'bookings';
 
 const ALLOWED_TYPES = ['본인', '조인'];
 const ALLOWED_STATUS = ['가예약', '확정', '취소예정', '취소완료'];
-// 예약 경로 구분: 골팡 앱을 통한 예약 / 골프장 홈페이지에서 본인이 직접 예약 / 동반자가 예약해준 경우.
-const ALLOWED_SOURCES = ['골팡', '홈페이지(본인예약)', '동반자예약'];
+// 예약 경로 구분: 골팡 앱을 통한 예약 / 골프장 홈페이지에서 본인이 직접 예약 / 동반자가 예약해준
+// 경우 / 카카오골프예약(조인 탭 전용 경로 - 조인 탭에서는 골팡·카카오골프만 선택 가능).
+const ALLOWED_SOURCES = ['골팡', '홈페이지(본인예약)', '동반자예약', '카카오골프'];
 
 export async function listBookings(env) {
   const raw = await env.GOLF_KV.get(BOOKINGS_KEY, 'json');
@@ -41,6 +42,8 @@ function normalizeBooking(input, existing = {}) {
     greenFeeAmount: input.greenFeeAmount != null ? Number(input.greenFeeAmount) : existing.greenFeeAmount ?? null,
     cartFeeAmount: input.cartFeeAmount != null ? Number(input.cartFeeAmount) : existing.cartFeeAmount ?? null,
     caddyFeeAmount: input.caddyFeeAmount != null ? Number(input.caddyFeeAmount) : existing.caddyFeeAmount ?? null,
+    // 선입금(先入金) - 조인 탭 예약 등록 전용 필드(카카오골프/골팡 조인 예약 시 미리 낸 금액).
+    depositAmount: input.depositAmount != null ? Number(input.depositAmount) : existing.depositAmount ?? null,
     companionCount: input.companionCount != null ? Number(input.companionCount) : existing.companionCount ?? null,
     paymentMethod: input.paymentMethod ?? existing.paymentMethod ?? '',
     reservationName: input.reservationName ?? existing.reservationName ?? '',
