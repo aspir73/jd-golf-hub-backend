@@ -111,15 +111,17 @@ export async function deleteCourse(env, id) {
   return changed;
 }
 
-/** MY골프장 카드를 위/아래로 한 칸 옮긴다 - 저장은 단순 JSON 배열이라 목록 순서 자체가 곧
- * 표시 순서다(별도 order 필드 없이 배열 안에서 인접 항목과 자리를 바꾸는 방식). */
-export async function moveCourse(env, id, direction) {
+/** MY골프장 카드를 드래그로 재정렬한 뒤, 프론트가 넘겨준 최종 순서(orderedIds)대로 배열을
+ * 통째로 다시 저장한다 - 저장은 단순 JSON 배열이라 목록 순서 자체가 곧 표시 순서다(별도 order
+ * 필드 없음). orderedIds에 없는 항목(동시 수정 등으로 최신 목록과 안 맞는 경우)은 데이터가
+ * 사라지지 않도록 뒤에 그대로 이어붙인다. */
+export async function reorderCourses(env, orderedIds) {
   const courses = await listCourses(env);
-  const idx = courses.findIndex((c) => c.id === id);
-  if (idx === -1) return null;
-  const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-  if (targetIdx < 0 || targetIdx >= courses.length) return courses; // 맨 위/아래에서는 더 이동 못 함(에러 아님)
-  [courses[idx], courses[targetIdx]] = [courses[targetIdx], courses[idx]];
-  await saveCourses(env, courses);
-  return courses;
+  const byId = new Map(courses.map((c) => [c.id, c]));
+  const reordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+  const reorderedIdSet = new Set(reordered.map((c) => c.id));
+  const missing = courses.filter((c) => !reorderedIdSet.has(c.id));
+  const next = [...reordered, ...missing];
+  await saveCourses(env, next);
+  return next;
 }

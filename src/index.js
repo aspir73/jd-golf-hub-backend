@@ -2,7 +2,7 @@ import { fetchWeather, fetchMidTermWeather } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
-import { listCourses, addCourse, updateCourse, deleteCourse, moveCourse } from './courses.js';
+import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses } from './courses.js';
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
@@ -165,11 +165,11 @@ export default {
         if (!ok) return error('해당 골프장을 찾을 수 없습니다', 404);
         return json({ deleted: true });
       }
-      const courseMoveMatch = pathname.match(/^\/api\/courses\/([^/]+)\/move$/);
-      if (courseMoveMatch && method === 'POST') {
-        const { direction } = await request.json();
-        const courses = await moveCourse(env, courseMoveMatch[1], direction === 'up' ? 'up' : 'down');
-        if (!courses) return error('해당 골프장을 찾을 수 없습니다', 404);
+      // 드래그로 재정렬한 최종 순서(id 배열)를 통째로 받아 그대로 저장(MY골프장 드래그 정렬용)
+      if (pathname === '/api/courses/reorder' && method === 'POST') {
+        const { orderedIds } = await request.json();
+        if (!Array.isArray(orderedIds)) return error('orderedIds(배열)가 필요합니다');
+        const courses = await reorderCourses(env, orderedIds);
         return json({ courses });
       }
 
