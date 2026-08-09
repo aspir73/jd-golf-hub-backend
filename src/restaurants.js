@@ -42,6 +42,7 @@ export async function addFavoriteRestaurant(env, input) {
     lon: input.lon != null ? Number(input.lon) : null,
     courseName: input.courseName || '',
     category: input.category || '',
+    placeUrl: input.placeUrl || '',
     memo: input.memo || '',
     createdAt: new Date().toISOString(),
   };
