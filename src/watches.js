@@ -131,9 +131,15 @@ async function fetchWatchResults(env, watch) {
     ? [...new Set(normKeys.map((k) => NORMALIZED_REGION_CODES[k].golfpang))]
     : [''];
   const golfpangMode = watch.mode === 'join' ? 'join' : 'booking';
+  // 부킹/조인 탭 조건검색은 캐디 칩 기본값이 "일반캐디"라 골팡 cdOrder=0으로 항상 필터링해서
+  // 보여준다(index.html의 NORMALIZED_CADDY.general.golfpang와 동일 값) - 워치도 캐디타입을
+  // 안 넘기면(=전체 캐디, 노캐디/운전캐디/인턴캐디까지 포함) 탭에서 기본 검색했을 때 안 보이는
+  // 매물까지 잡아내서 "워치 결과가 검색과 다르다"는 걸로 보였다. 탭의 기본 검색과 같은 조건으로
+  // 맞춘다.
+  const WATCH_GOLFPANG_CADDY_TYPE = '0';
   for (const sector of golfpangSectors) {
     try {
-      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode });
+      const { rounds } = await searchGolfpangRounds(env, { date: watch.date, sector, mode: golfpangMode, caddyType: WATCH_GOLFPANG_CADDY_TYPE });
       rounds
         .filter((r) => courseNameMatches(r, watch) && matchesTimeOfDay(r.time, watch.timeOfDay))
         .forEach((r) => results.push({ source: '골팡', time: r.time, holes: r.holes, greenFee: r.greenFee }));
