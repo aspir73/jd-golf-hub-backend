@@ -2,7 +2,7 @@ import { fetchWeather, fetchMidTermWeather } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
-import { listCourses, addCourse, updateCourse, deleteCourse } from './courses.js';
+import { listCourses, addCourse, updateCourse, deleteCourse, moveCourse } from './courses.js';
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
@@ -164,6 +164,13 @@ export default {
         const ok = await deleteCourse(env, courseMatch[1]);
         if (!ok) return error('해당 골프장을 찾을 수 없습니다', 404);
         return json({ deleted: true });
+      }
+      const courseMoveMatch = pathname.match(/^\/api\/courses\/([^/]+)\/move$/);
+      if (courseMoveMatch && method === 'POST') {
+        const { direction } = await request.json();
+        const courses = await moveCourse(env, courseMoveMatch[1], direction === 'up' ? 'up' : 'down');
+        if (!courses) return error('해당 골프장을 찾을 수 없습니다', 404);
+        return json({ courses });
       }
 
       // ===== 동반자 =====
