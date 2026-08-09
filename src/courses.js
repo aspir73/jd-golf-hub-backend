@@ -1,6 +1,7 @@
 // 골프장 마스터 DB(즐겨찾기) KV CRUD. 개인 규모라 단일 JSON 배열로 저장 (기획서 3-1 골프장 마스터 DB 구조 참고).
-import { coordToRegion, fetchDrivingRoute } from './kakao.js';
+import { coordToRegion, fetchDrivingRoute, searchKeyword } from './kakao.js';
 import { getSettings } from './settings.js';
+import { findBestMatch, normalizeCourseName } from './golfCourseDB.js';
 
 const COURSES_KEY = 'courses';
 
@@ -105,14 +106,82 @@ function normalizeCourse(input, existing = {}) {
   };
 }
 
-export async function addCourse(env, input) {
+/** input.name을 문체부 공식 DB와 매칭해서 표준 명칭/지역으로 정리하고("코리아cc" vs
+ * "코리아컨트리클럽" 같은 표기 차이를 하나로 합침 - 중복 판정의 기준이 됨), courses(현재까지의
+ * 즐겨찾기 배열)에 이미 같은 골프장이 있으면 예외를 던진다. 좌표가 없으면 카카오 검색으로
+ * 좌표/주소/연락처도 최대한 채운다. courses 배열 자체는 건드리지 않는다(호출부가 push 시점을
+ * 결정 - addCourse는 즉시, bulkAddCourses는 반복 중 계속 같은 배열에 누적). */
+async function resolveNewCourseRecord(env, input, courses) {
   if (!input.name) throw new Error('골프장명(name)은 필수입니다');
-  const courses = await listCourses(env);
-  let record = normalizeCourse(input);
+
+  const matched = findBestMatch(input.name, { region: input.region || undefined });
+  const resolvedName = matched?.name || input.name;
+  const resolvedRegion = input.region || matched?.region || '';
+
+  const normTarget = normalizeCourseName(resolvedName);
+  const dup = courses.find((c) => normalizeCourseName(c.name) === normTarget);
+  if (dup) {
+    throw new Error(`이미 등록된 골프장입니다: ${dup.name}`);
+  }
+
+  const mergedInput = { ...input, name: resolvedName, region: resolvedRegion };
+
+  // 좌표가 없으면(이름만으로 추가하는 경우 - 예: 일괄 등록) 카카오 검색으로 좌표/주소/연락처를
+  // 최대한 자동으로 채운다. 실패해도 이름만으로는 등록을 계속 진행한다(부가정보라 필수는 아님).
+  if (mergedInput.lat == null || mergedInput.lon == null) {
+    try {
+      const places = await searchKeyword(env, resolvedName);
+      const best = places[0];
+      if (best) {
+        mergedInput.lat = mergedInput.lat ?? best.lat;
+        mergedInput.lon = mergedInput.lon ?? best.lon;
+        mergedInput.address = mergedInput.address || best.address;
+        mergedInput.bookingPhone = mergedInput.bookingPhone || best.phone;
+      }
+    } catch {
+      // 실패해도 조용히 무시
+    }
+  }
+
+  let record = normalizeCourse(mergedInput);
   record = await withHomeDistance(env, record);
+  return record;
+}
+
+export async function addCourse(env, input) {
+  const courses = await listCourses(env);
+  const record = await resolveNewCourseRecord(env, input, courses);
   courses.push(record);
   await saveCourses(env, courses);
   return record;
+}
+
+/** 골프장명 목록을 한 번에 등록한다. addCourse를 항목마다 반복 호출하면 매번 KV를 읽고-쓰는데,
+ * Cloudflare KV는 최종 일관성(쓰기가 전세계에 반영되기까지 지연 가능)이라 짧은 간격으로 연달아
+ * 호출하면 뒤 요청이 앞 요청의 쓰기를 못 보고 그대로 덮어써서 먼저 추가한 게 사라지는 문제가
+ * 실제로 있었다(레이스 컨디션 - 34개 일괄 등록 중 11개가 이렇게 유실됐던 걸 발견하고 수정).
+ * 그래서 목록 전체를 KV 읽기 1번 + 쓰기 1번으로 처리한다(항목별 결과는 메모리 상의 같은 배열에
+ * 계속 누적해서 판단 - 중간에 KV를 다시 읽지 않으므로 레이스가 원천적으로 발생하지 않는다). */
+export async function bulkAddCourses(env, names) {
+  const courses = await listCourses(env);
+  const results = { added: [], skipped: [], failed: [] };
+  for (const rawName of names) {
+    const name = (rawName || '').trim();
+    if (!name) continue;
+    try {
+      const record = await resolveNewCourseRecord(env, { name }, courses);
+      courses.push(record);
+      results.added.push({ input: name, name: record.name, hasCoords: record.lat != null });
+    } catch (e) {
+      if ((e.message || '').includes('이미 등록된')) {
+        results.skipped.push({ input: name, reason: e.message });
+      } else {
+        results.failed.push({ input: name, error: e.message });
+      }
+    }
+  }
+  await saveCourses(env, courses);
+  return results;
 }
 
 export async function updateCourse(env, id, input) {

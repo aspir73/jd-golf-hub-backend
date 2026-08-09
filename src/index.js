@@ -2,7 +2,7 @@ import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather } from './weat
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
-import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses } from './courses.js';
+import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses, bulkAddCourses } from './courses.js';
 import { resolveWeekGreenFees } from './courseGreenFees.js';
 import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
 import { computeSettlement } from './settlement.js';
@@ -165,6 +165,13 @@ export default {
       if (pathname === '/api/courses' && method === 'POST') {
         const record = await addCourse(env, await request.json());
         return json({ course: record }, 201);
+      }
+      // 여러 골프장명을 한 번에 등록(레이스 컨디션 없이 KV 읽기1/쓰기1로 처리 - courses.js 참고)
+      if (pathname === '/api/courses/bulk' && method === 'POST') {
+        const { names } = await request.json();
+        if (!Array.isArray(names) || !names.length) return error('names(배열)가 필요합니다');
+        const results = await bulkAddCourses(env, names);
+        return json(results);
       }
       const courseMatch = pathname.match(/^\/api\/courses\/([^/]+)$/);
       if (courseMatch && method === 'PUT') {
