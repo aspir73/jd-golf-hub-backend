@@ -51,12 +51,15 @@ async function backfillHomeTravelInfo(env, record) {
 export async function listCourses(env) {
   const raw = await env.GOLF_KV.get(COURSES_KEY, 'json');
   const courses = raw || [];
-  let changed = false;
-  for (const c of courses) {
-    if (await backfillRegion(env, c)) changed = true;
-    if (await backfillHomeTravelInfo(env, c)) changed = true;
-  }
-  if (changed) await saveCourses(env, courses);
+  // 보통은 이미 다 채워져 있어서(등록 시점에 채움) 여기서 실제로 API를 부르는 경우가 드물지만,
+  // 혹시 한꺼번에 여러 건이 채워야 할 상태로 남아있으면(예: 이 필드들이 생기기 전에 등록된
+  // 기존 데이터 마이그레이션) 골프장별로 순서대로 기다리지 않고 동시에 처리한다.
+  const changedFlags = await Promise.all(courses.map(async (c) => {
+    const a = await backfillRegion(env, c);
+    const b = await backfillHomeTravelInfo(env, c);
+    return a || b;
+  }));
+  if (changedFlags.some(Boolean)) await saveCourses(env, courses);
   return courses;
 }
 

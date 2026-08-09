@@ -4,8 +4,6 @@ import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
 import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses, bulkAddCourses } from './courses.js';
 import { resolveWeekGreenFees } from './courseGreenFees.js';
-import { listCompanions, addCompanion, updateCompanion, deleteCompanion } from './companions.js';
-import { computeSettlement } from './settlement.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
 import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute, searchHomepageCandidates } from './kakao.js';
 import { searchGolfpangRoundsAllPages } from './golfpang.js';
@@ -196,31 +194,6 @@ export default {
         const courses = await listCourses(env);
         const greenFees = await resolveWeekGreenFees(env, courses);
         return json({ greenFees });
-      }
-
-      // ===== 동반자 =====
-      if (pathname === '/api/companions' && method === 'GET') {
-        return json({ companions: await listCompanions(env) });
-      }
-      if (pathname === '/api/companions' && method === 'POST') {
-        const record = await addCompanion(env, await request.json());
-        return json({ companion: record }, 201);
-      }
-      const companionMatch = pathname.match(/^\/api\/companions\/([^/]+)$/);
-      if (companionMatch && method === 'PUT') {
-        const record = await updateCompanion(env, companionMatch[1], await request.json());
-        if (!record) return error('해당 동반자를 찾을 수 없습니다', 404);
-        return json({ companion: record });
-      }
-      if (companionMatch && method === 'DELETE') {
-        const ok = await deleteCompanion(env, companionMatch[1]);
-        if (!ok) return error('해당 동반자를 찾을 수 없습니다', 404);
-        return json({ deleted: true });
-      }
-
-      // ===== 정산 =====
-      if (pathname === '/api/settlement/calculate' && method === 'POST') {
-        return json(computeSettlement(await request.json()));
       }
 
       // ===== 맛집 =====

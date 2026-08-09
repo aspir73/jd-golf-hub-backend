@@ -203,15 +203,10 @@ async function fetchWatchResults(env, watch, { maxGolfpangPages = 1 } = {}) {
   return results.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 }
 
-/** 워치 하나를 재검색하고 결과를 KV에 반영한다. 직전 결과에 없던 시간대는 isNew:true로 표시해서
- * 화면에서 "새로 생긴 자리"를 강조할 수 있게 한다. maxGolfpangPages: 크론 배치(refreshAllWatches)는
- * 서브리퀘스트 예산 때문에 1(페이지 1만)로 부르고, 사용자가 "🔄 지금 새로고침"을 직접 눌렀을 때는
- * index.js에서 더 큰 값으로 불러서 정확한 결과를 준다. */
-export async function refreshWatch(env, watchId, { maxGolfpangPages = 1 } = {}) {
-  const watches = await listWatches(env);
-  const idx = watches.findIndex((w) => w.id === watchId);
-  if (idx === -1) return null;
-  const watch = watches[idx];
+/** 워치 객체 하나를 실제로 재검색해서 lastResults/lastError/lastCheckedAt을 갱신한다(watch
+ * 객체를 그 자리에서 직접 mutate - KV 읽기/쓰기는 호출부 책임). refreshWatch(단건 새로고침)와
+ * refreshAllWatches(크론 배치)가 이 로직을 공유하되, KV 읽기/쓰기 횟수만 다르게 가져간다. */
+async function applyWatchRefresh(env, watch, { maxGolfpangPages = 1 } = {}) {
   const previousKeys = new Set((watch.lastResults || []).map((r) => `${r.source}:${r.time}`));
   try {
     const results = await fetchWatchResults(env, watch, { maxGolfpangPages });
@@ -221,21 +216,38 @@ export async function refreshWatch(env, watchId, { maxGolfpangPages = 1 } = {}) 
     watch.lastError = e.message || String(e);
   }
   watch.lastCheckedAt = new Date().toISOString();
-  watches[idx] = watch;
+}
+
+/** 워치 하나를 재검색하고 결과를 KV에 반영한다. 직전 결과에 없던 시간대는 isNew:true로 표시해서
+ * 화면에서 "새로 생긴 자리"를 강조할 수 있게 한다. maxGolfpangPages: 크론 배치(refreshAllWatches)는
+ * 서브리퀘스트 예산 때문에 1(페이지 1만)로 부르고, 사용자가 "🔄 지금 새로고침"을 직접 눌렀을 때는
+ * index.js에서 더 큰 값으로 불러서 정확한 결과를 준다. */
+export async function refreshWatch(env, watchId, opts = {}) {
+  const watches = await listWatches(env);
+  const idx = watches.findIndex((w) => w.id === watchId);
+  if (idx === -1) return null;
+  await applyWatchRefresh(env, watches[idx], opts);
   await saveWatches(env, watches);
-  return watch;
+  return watches[idx];
 }
 
 /** Cron 트리거에서 호출 - 활성 상태고 아직 지나지 않은 날짜의 워치만 순서대로 갱신한다.
  * Worker 서브리퀘스트 한도(무료 플랜 기준 요청당 50개, 워치 하나당 최대 3개 소모 - 골팡 지역별
  * 호출 + 카카오 검색 + 카카오 상세) 안에서 안전하게 처리하려고 한 번에 최대 15개까지만 처리한다
- * (개인용 앱이라 동시에 활성 워치가 많지 않을 걸 전제로 한 값 - 실사용 중 부족하면 늘릴 것). */
+ * (개인용 앱이라 동시에 활성 워치가 많지 않을 걸 전제로 한 값 - 실사용 중 부족하면 늘릴 것).
+ * KV는 배치 전체에 대해 읽기 1번/쓰기 1번만 한다 - 예전엔 워치마다 refreshWatch를 그대로
+ * 호출해서 15개면 KV 읽기/쓰기가 각각 15번씩 반복됐는데(불필요한 낭비이자, courses.js/
+ * bulkAddWatches 등에서 이미 고쳤던 것과 같은 종류의 KV 레이스 컨디션 위험도 있었다 - 크론이
+ * 배치를 도는 몇 초 사이 사용자가 앱에서 워치를 추가/삭제하면 서로의 쓰기를 덮어쓸 수 있었음),
+ * targets가 watches 배열 안의 같은 객체를 참조한다는 점을 이용해 메모리에서 다 갱신한 뒤
+ * 마지막에 한 번만 저장한다. */
 export async function refreshAllWatches(env) {
   const watches = await listWatches(env);
   const today = new Date().toISOString().slice(0, 10);
   const targets = watches.filter((w) => w.active && w.date >= today).slice(0, 15);
-  for (const w of targets) {
-    await refreshWatch(env, w.id);
+  for (const watch of targets) {
+    await applyWatchRefresh(env, watch, { maxGolfpangPages: 1 });
   }
+  await saveWatches(env, watches);
   return targets.length;
 }
