@@ -54,7 +54,14 @@ export async function ingestPriceSnapshot(env, { collectedDate, roundDate, entri
   const cDate = toDateOnly(collectedDate);
   const rDate = toDateOnly(roundDate);
   if (!cDate || !rDate) throw new Error('collectedDate, roundDate(YYYY-MM-DD)가 필요합니다');
-  if (!Array.isArray(entries) || !entries.length) return { inserted: 0 };
+  // entries가 아예 배열이 아니면(구버전 price_collector.py가 보내는 {regionGroup, mode, rows}
+  // 형태 등) 요청 자체가 잘못된 것이라 에러로 명확히 알린다 - 예전엔 이 경우도 {inserted:0}으로
+  // 조용히 "성공" 응답해버려서, NAS 스크립트를 갱신 안 하고 계속 돌려도 매번 0건 저장되는 걸
+  // 로그로만 봐야 알 수 있었다(실제로 이 문제가 있었음).
+  if (!Array.isArray(entries)) {
+    throw new Error('entries 배열이 필요합니다 - price_collector.py가 최신 버전인지 확인해주세요(nas-collector/README.md)');
+  }
+  if (!entries.length) return { inserted: 0 };
 
   const leadDays = daysBetween(cDate, rDate);
   const weekday = new Date(`${rDate}T00:00:00Z`).getUTCDay();
