@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-골프장 조인/부킹 가격 히스토리 수집기 (NAS에서 매일 새벽 1시 실행).
+골프장 부킹 가격 히스토리 수집기 (NAS에서 매일 새벽 1시 실행).
 
-Cloudflare Workers는 요청 1회당 외부 호출 횟수 제한(무료 플랜 기준 50개)이 있어서, 지역 4개 ×
-기간(기본 30일) × 모드 2개 = 최대 240회 규모의 매일 수집을 Worker 크론으로는 돌릴 수 없다.
-그래서 이 스크립트를 NAS(제한 없음)에서 돌리고, 결과를 Cloudflare Worker의
-POST /api/price-dashboard/ingest 로 그때그때 밀어넣는다(push).
+골팡(golfpang.com)의 "부킹" 매물과 카카오골프예약(kakao.golf)을 같은 라운드일에 대해 같이
+수집해서, "골프장 + 라운드일 + 시간대(오전/오후/야간)" 단위로 두 플랫폼 중 더 싼 값만 남기고
+Cloudflare Worker의 POST /api/price-dashboard/ingest 로 보낸다. 병합(공식 골프장명 매칭 +
+최저가 dedup) 자체는 Worker 쪽(src/priceDashboard.js)에서 한다 - 매칭 로직(golfCourseDB.js)을
+Python으로 중복 유지하지 않기 위해서다. 이 스크립트는 원자료를 모아서 보내는 역할만 한다.
 
-골팡(golfpang.com)에 대한 요청 구성·HTML 파싱 로직은 백엔드 저장소의 src/golfpang.js
-(searchGolfpangRounds/parseRoundRows)를 그대로 이식한 것 - 두 곳을 수정할 일이 생기면 양쪽 다
-같이 바꿔야 한다(정규화 규칙처럼 "양쪽에 동일하게 유지해야 하는 규칙" 목록에 추가할 것).
+Cloudflare Workers는 요청 1회당 외부 호출 횟수 제한(무료 플랜 기준 50개)이 있어서 이 수집을
+Worker 크론으로는 돌릴 수 없다 - NAS(제한 없음)에서 돌리고 결과만 push한다.
 
 표준 라이브러리만 사용한다(urllib/re/json) - Synology DS-214는 Docker를 못 쓰고, pip로 외부
 패키지(requests 등)를 설치하는 것도 매번 확인해야 해서 번거로우므로 의존성을 아예 없앴다.
 
-골프장 공식명 매칭(golfCourseDB.js의 findBestMatch)은 여기서 하지 않는다 - Worker의
-ingestPriceSnapshot이 원문 골프장명(courseName)을 받아서 대신 매칭한다. 매칭 로직을 두 언어로
-중복 유지하지 않기 위해서다.
+요청 구성 참고 원본(수정 시 같이 봐야 함):
+  - 골팡: src/golfpang.js (searchGolfpangRounds / parseRoundRows)
+  - 카카오골프예약: src/kakaogolf.js (searchKakaoGolfRounds / fetchGolfInfo)
 """
 
 import json
@@ -35,21 +35,32 @@ CONFIG_PATH = SCRIPT_DIR / "config.json"
 LOG_PATH = SCRIPT_DIR / "logs" / "price_collector.log"
 
 GOLFPANG_BASE = "https://www.golfpang.com"
+KAKAOGOLF_BASE = "https://www.kakao.golf"
 
-# regionMap.js NORMALIZED_REGION_CODES의 golfpang 코드와 동일 (한강이남/강북·경춘/강원/충청).
+# regionMap.js NORMALIZED_REGION_CODES의 golfpang 코드와 동일. 카카오골프예약은 "서울/경기"가
+# 한강이남/강북·경춘을 구분하지 않아서(major '1') 그 둘의 golfpang 조회 결과로 나중에 Worker가
+# regionGroup을 역추론한다(priceDashboard.js ingestPriceSnapshot 참고) - 그래서 여기 KAKAO_MAJOR는
+# gangwon/chungcheong에만 있고, "서울/경기"는 아래 KAKAO_SEOUL_GYEONGGI_MAJOR로 따로 한 번만 조회한다.
 REGIONS = {
-    "hangang": "5",
-    "gangbuk": "1",
-    "gangwon": "8",
-    "chungcheong": "4",
+    "hangang": {"golfpang_sector": "5"},
+    "gangbuk": {"golfpang_sector": "1"},
+    "gangwon": {"golfpang_sector": "8", "kakao_major": "12"},
+    "chungcheong": {"golfpang_sector": "4", "kakao_major": "22"},
 }
-MODES = ["booking", "join"]
+KAKAO_SEOUL_GYEONGGI_MAJOR = "1"
+
+# "오전(~12시)/오후(12~16시)/야간(16시~)" - 카카오골프예약 자체 timeZone 비트마스크(새벽1/오전2/
+# 오후4/야간8)와 경계가 정확히 일치한다. 오전 = 새벽+오전 비트 합산.
+TIME_BUCKET_BITS = {"오전": 1 | 2, "오후": 4, "야간": 8}
 
 TR_RE = re.compile(r'<tr id="tr_(\d+)"[^>]*>([\s\S]*?)</tr>')
 TD_RE = re.compile(r"<td[^>]*>([\s\S]*?)</td>")
 TAG_RE = re.compile(r"<[^>]*>")
 WS_RE = re.compile(r"\s+")
 FEE_RE = re.compile(r"[\d,]+")
+TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})")
+
+UA = "Mozilla/5.0 (compatible; JDGolfPriceCollector/1.0)"
 
 
 def log(message):
@@ -68,10 +79,25 @@ def load_config():
         )
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
         cfg = json.load(f)
-    cfg.setdefault("lookahead_days", 30)
+    cfg.setdefault("lookahead_days", 7)
     cfg.setdefault("max_pages_per_search", 5)
     cfg.setdefault("request_delay_seconds", 0.5)
     return cfg
+
+
+def time_bucket_of(hhmm):
+    m = TIME_RE.match(hhmm or "")
+    if not m:
+        return None
+    hour = int(m.group(1))
+    if hour < 12:
+        return "오전"
+    if hour < 16:
+        return "오후"
+    return "야간"
+
+
+# ===== 골팡(부킹) =====
 
 
 def strip_tags(html):
@@ -82,33 +108,22 @@ def strip_tags(html):
     return text
 
 
-def parse_total_count(html):
-    m = re.search(r"총\s*<strong>\s*([\d,]+)\s*</strong>", html)
-    return int(m.group(1).replace(",", "")) if m else None
-
-
 def parse_round_rows(html):
-    """<tr id="tr_{idx}">...<td>...</td>...</tr> 반복 구조 파싱. 칼럼 순서는
-    booking_tblList.do / join_tblList.do 양쪽 동일(golfpang.js parseRoundRows와 동일 기준):
-    0=지역 1=부킹일 2=티타임 4=골프장 5=홀수 7=그린피 8=작성자 9=캐디유무 10=구분."""
+    """<tr id="tr_{idx}">...<td>...</td>...</tr> 반복 구조 파싱. 칼럼 순서(golfpang.js
+    parseRoundRows와 동일 기준): 2=티타임 4=골프장 5=홀수 7=그린피 9=캐디유무."""
     rows = []
     for tr_match in TR_RE.finditer(html):
-        row_html = tr_match.group(2)
-        cells = [strip_tags(td.group(1)) for td in TD_RE.finditer(row_html)]
+        cells = [strip_tags(td.group(1)) for td in TD_RE.finditer(tr_match.group(2))]
         if len(cells) < 8:
             continue
         fee_match = FEE_RE.search(cells[7] or "")
         rows.append(
             {
-                "region": cells[0] if len(cells) > 0 else "",
-                "date": cells[1] if len(cells) > 1 else "",
                 "time": cells[2] if len(cells) > 2 else "",
                 "courseName": cells[4] if len(cells) > 4 else "",
                 "holes": cells[5] if len(cells) > 5 else "",
                 "greenFee": int(fee_match.group(0).replace(",", "")) if fee_match else None,
-                "nickname": cells[8] if len(cells) > 8 else "",
                 "caddyType": cells[9] if len(cells) > 9 else "",
-                "category": cells[10] if len(cells) > 10 else "",
             }
         )
     return rows
@@ -129,11 +144,29 @@ def http_post_form(url, form_dict, headers, timeout=20, retries=2):
     raise last_err
 
 
-def search_golfpang_page(round_date, sector, mode, page):
-    is_join = mode == "join"
-    endpoint = "join_tblList.do" if is_join else "booking_tblList.do"
-    referer_page = "join_list.do" if is_join else "booking_list.do"
+def http_post_json(url, body_dict, referer=None, timeout=20, retries=2):
+    data = json.dumps(body_dict).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "Origin": KAKAOGOLF_BASE,
+        "User-Agent": UA,
+    }
+    if referer:
+        headers["Referer"] = referer
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    raise last_err
 
+
+def search_golfpang_page(round_date, sector, page):
     body = {
         "pageNum": str(page),
         "bkOrder": "",
@@ -145,54 +178,182 @@ def search_golfpang_page(round_date, sector, mode, page):
         "clubname": "",
         "sector2": sector,
         "cdOrder": "",  # 전체 캐디유형 - 가격 수집은 조건을 좁히지 않고 최대한 넓게 본다
+        "sector3": "",
     }
-    if is_join:
-        body["notima"] = ""
-        body["jitype1"] = ""
-    else:
-        body["sector3"] = ""
-
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
         "X-Requested-With": "XMLHttpRequest",
-        "Referer": f"{GOLFPANG_BASE}/web/round/{referer_page}",
-        "User-Agent": "Mozilla/5.0 (compatible; JDGolfPriceCollector/1.0)",
+        "Referer": f"{GOLFPANG_BASE}/web/round/booking_list.do",
+        "User-Agent": UA,
     }
-    html = http_post_form(f"{GOLFPANG_BASE}/web/round/{endpoint}", body, headers)
-    return html
+    return http_post_form(f"{GOLFPANG_BASE}/web/round/booking_tblList.do", body, headers)
 
 
-def search_golfpang_all_pages(round_date, sector, mode, max_pages, delay):
-    all_rows = []
-    for page in range(1, max_pages + 1):
-        html = search_golfpang_page(round_date, sector, mode, page)
-        rows = parse_round_rows(html)
-        all_rows.extend(rows)
-        if len(rows) < 100:  # 마지막 페이지
-            break
+def collect_golfpang_entries(round_date, max_pages, delay):
+    entries = []
+    for region_group, cfg in REGIONS.items():
+        for page in range(1, max_pages + 1):
+            html = search_golfpang_page(round_date, cfg["golfpang_sector"], page)
+            rows = parse_round_rows(html)
+            for r in rows:
+                bucket = time_bucket_of(r["time"])
+                if not bucket or r["greenFee"] is None or not r["courseName"]:
+                    continue
+                entries.append(
+                    {
+                        "source": "golfpang",
+                        "regionGroup": region_group,
+                        "courseName": r["courseName"],
+                        "time": r["time"],
+                        "timeBucket": bucket,
+                        "greenFee": r["greenFee"],
+                        "holes": r["holes"],
+                        "caddyType": r["caddyType"],
+                    }
+                )
+            if len(rows) < 100:  # 마지막 페이지
+                break
+            time.sleep(delay)
         time.sleep(delay)
-    return all_rows
+    return entries
 
 
-def send_to_ingest(cfg, collected_date, round_date, region_group, mode, rows):
+# ===== 카카오골프예약 =====
+
+
+def kakaogolf_search_body(compact_date, major, bucket_bits):
+    return {
+        "date": compact_date,
+        "qfSeq": "0",
+        "searchType": 2,
+        "lowGuarantee": "N",
+        "selectedDates": None,
+        "flagCashBack": "N",
+        "quickFilterTypeHistory": None,
+        "weekType": "1",
+        "areas1s": [int(major)],
+        "enterType": "MAIN_AREA",
+        "searchSeq": "1",
+        "reservFlag": "N",
+        "title": "",
+        "listType": "0",
+        "detailAreaText": "",
+        "filter": {
+            "greenFee": 0,
+            "greenFeeList": [0],
+            "timeZone": bucket_bits,
+            "timeZoneList": [0, bucket_bits],
+            "orderForGolfClubListMode": 0,
+            "orderForTeeTimeListMode": 0,
+            "timeZoneDisable": 0,
+            "greenFeeDisable": 0,
+            "paymentMethodDisable": 0,
+            "visitorCntDisable": 0,
+            "eventEnable": False,
+            "paymentMethodFlag": 0,
+            "paymentMethodList": [],
+            "visitorCntFlag": 0,
+            "visitorCnts": [],
+            "holeCnt": 0,
+            "holeCntFlag": 0,
+            "holeCntList": [],
+            "event": 0,
+            "events": [],
+            "isOnlyAvailableTeeTime": False,
+            "isOnlyCashBackTeeTime": False,
+            "isOnlyLowGuarantee": False,
+            "paymentMethod": "",
+            "visitorCnt": 0,
+        },
+        "isOnlyCashBackCondition": "false",
+        "golfinfos": [],
+        "searchName": "",
+        "areas2": [0],
+        "sigunguSeq": "1",
+    }
+
+
+def kakaogolf_search(compact_date, major, bucket_bits):
+    data = http_post_json(
+        f"{KAKAOGOLF_BASE}/api/tee-time/search",
+        kakaogolf_search_body(compact_date, major, bucket_bits),
+        referer=f"{KAKAOGOLF_BASE}/tee-time?area={major}&date={compact_date}",
+    )
+    if data.get("resultCode") != 200:
+        raise RuntimeError(data.get("resultMsg") or "카카오골프예약 응답 오류")
+    return [item for item in (data.get("list") or []) if (item.get("timeCnt") or 0) > 0]
+
+
+def kakaogolf_golf_info(golf_info_seq, cache):
+    """골프장명 해석(골프장 단위 요약엔 이름이 안 들어있어서 필요). 스크립트 한 번 실행 안에서만
+    캐싱(파일 영속화는 하지 않음 - 이름은 거의 안 바뀌고, 실행 하나당 중복 조회만 막으면 충분)."""
+    if golf_info_seq in cache:
+        return cache[golf_info_seq]
+    try:
+        data = http_post_json(
+            f"{KAKAOGOLF_BASE}/api/golf/view",
+            {"golfInfoSeq": golf_info_seq},
+            referer=f"{KAKAOGOLF_BASE}/golf/{golf_info_seq}",
+        )
+    except Exception:
+        return None
+    if data.get("resultCode") != 200:
+        return None
+    info = {"name": data.get("fullName") or "", "holeCount": data.get("holeCount")}
+    cache[golf_info_seq] = info
+    return info
+
+
+def collect_kakaogolf_entries(round_date, delay, info_cache):
+    compact = round_date.replace("-", "")
+    entries = []
+    majors = [(KAKAO_SEOUL_GYEONGGI_MAJOR, None), ("12", "gangwon"), ("22", "chungcheong")]
+    for major, region_group in majors:
+        for bucket_label, bits in TIME_BUCKET_BITS.items():
+            try:
+                items = kakaogolf_search(compact, major, bits)
+            except Exception as e:  # noqa: BLE001
+                log(f"ERROR kakaogolf major={major} {bucket_label} {round_date}: {e}")
+                time.sleep(delay)
+                continue
+            for item in items:
+                seq = item.get("golfInfoSeq")
+                info = kakaogolf_golf_info(seq, info_cache)
+                if not info or not info.get("name"):
+                    continue
+                fee = item.get("minGreenFeeDC")
+                if fee is None:
+                    fee = item.get("minGreenFeeNO")
+                if fee is None:
+                    continue
+                entries.append(
+                    {
+                        "source": "kakaogolf",
+                        "regionGroup": region_group,
+                        "courseName": info["name"],
+                        "time": None,
+                        "timeBucket": bucket_label,
+                        "greenFee": fee,
+                        "holes": f"{info['holeCount']}홀" if info.get("holeCount") else None,
+                        "caddyType": None,
+                    }
+                )
+            time.sleep(delay)
+    return entries
+
+
+def send_to_ingest(cfg, collected_date, round_date, entries):
     payload = json.dumps(
-        {
-            "collectedDate": collected_date,
-            "roundDate": round_date,
-            "regionGroup": region_group,
-            "mode": mode,
-            "rows": rows,
-        }
+        {"collectedDate": collected_date, "roundDate": round_date, "entries": entries}
     ).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "X-Ingest-Secret": cfg["ingest_secret"],
-        # Cloudflare가 기본 Python-urllib User-Agent를 봇으로 차단한다(error code 1010, 실측 확인됨) -
-        # 골팡 요청과 마찬가지로 평범한 UA를 붙여야 우리 자신의 Worker에도 도달할 수 있다.
-        "User-Agent": "Mozilla/5.0 (compatible; JDGolfPriceCollector/1.0)",
+        # Cloudflare가 기본 Python-urllib User-Agent를 봇으로 차단한다(error code 1010, 실측 확인됨).
+        "User-Agent": UA,
     }
     req = urllib.request.Request(cfg["ingest_url"], data=payload, method="POST", headers=headers)
-    with urllib.request.urlopen(req, timeout=20) as res:
+    with urllib.request.urlopen(req, timeout=30) as res:
         return json.loads(res.read().decode("utf-8"))
 
 
@@ -202,35 +363,41 @@ def main():
     lookahead_days = int(cfg["lookahead_days"])
     max_pages = int(cfg["max_pages_per_search"])
     delay = float(cfg["request_delay_seconds"])
+    info_cache = {}
 
-    log(f"===== 수집 시작 (collected_date={collected_date}, lookahead={lookahead_days}일) =====")
+    log(f"===== 수집 시작 (collected_date={collected_date}, lookahead={lookahead_days}일, 부킹만+카카오골프예약 병합) =====")
     total_sent = 0
     total_errors = 0
-    total_calls = 0
 
-    for region_group, sector in REGIONS.items():
-        for day_offset in range(lookahead_days):
-            round_date = (date.today() + timedelta(days=day_offset)).isoformat()
-            for mode in MODES:
-                total_calls += 1
-                try:
-                    rows = search_golfpang_all_pages(round_date, sector, mode, max_pages, delay)
-                    if rows:
-                        result = send_to_ingest(cfg, collected_date, round_date, region_group, mode, rows)
-                        total_sent += result.get("inserted", 0)
-                        log(f"{region_group} {round_date} {mode}: {len(rows)}건 수집 -> {result.get('inserted', 0)}건 저장")
-                    else:
-                        log(f"{region_group} {round_date} {mode}: 0건")
-                except Exception as e:  # noqa: BLE001 - 하나 실패해도 나머지는 계속 돌아야 함
-                    total_errors += 1
-                    log(f"ERROR {region_group} {round_date} {mode}: {e}")
-                time.sleep(delay)
+    for day_offset in range(lookahead_days):
+        round_date = (date.today() + timedelta(days=day_offset)).isoformat()
+        try:
+            golfpang_entries = collect_golfpang_entries(round_date, max_pages, delay)
+        except Exception as e:  # noqa: BLE001
+            golfpang_entries = []
+            total_errors += 1
+            log(f"ERROR golfpang {round_date}: {e}")
 
-    log(f"===== 수집 완료: 호출 {total_calls}회 중 에러 {total_errors}회, 총 {total_sent}건 저장 =====")
+        kakaogolf_entries = collect_kakaogolf_entries(round_date, delay, info_cache)
 
-    # 절반 넘게 실패했으면 DSM 작업 스케줄러의 "작업 실패" 알림이 뜨도록 비정상 종료시킨다
-    # (조용히 절반만 수집되고 넘어가는 것보다, 눈에 띄게 실패로 표시되는 편이 낫다).
-    if total_calls and total_errors > total_calls * 0.5:
+        all_entries = golfpang_entries + kakaogolf_entries
+        if not all_entries:
+            log(f"{round_date}: 수집 0건 (골팡/카카오 둘 다 매물 없음)")
+            continue
+        try:
+            result = send_to_ingest(cfg, collected_date, round_date, all_entries)
+            total_sent += result.get("inserted", 0)
+            log(
+                f"{round_date}: 골팡 {len(golfpang_entries)}건 + 카카오 {len(kakaogolf_entries)}건 "
+                f"-> 병합 후 {result.get('inserted', 0)}건 저장"
+            )
+        except Exception as e:  # noqa: BLE001
+            total_errors += 1
+            log(f"ERROR ingest {round_date}: {e}")
+
+    log(f"===== 수집 완료: {lookahead_days}일 처리 중 에러 {total_errors}회, 총 {total_sent}건 저장 =====")
+
+    if total_errors > lookahead_days * 0.5:
         log("에러 비율이 50%를 넘어 비정상 종료로 표시합니다.")
         sys.exit(1)
 
