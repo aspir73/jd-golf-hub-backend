@@ -184,22 +184,34 @@ export async function getLeadTimeTrend(env, { courseName }) {
   });
 }
 
-/** 오늘(또는 지정 날짜) 기준, 지역별 최저가 골프장 Top N - 대시보드 요약 카드용. */
+/** 지역별 최저가 골프장 Top N - 대시보드 요약 카드용. roundDate를 지정하면 그 날짜만 보고, 생략하면
+ * "오늘 이후(당일 포함) 수집된 모든 라운드일 중 최저가"를 본다 - 골팡/카카오 둘 다 당일(즉시) 매물이
+ * 거의 없어서(실측 확인됨: 수집 시점 기준 다음날부터 매물이 잡힘) round_date를 정확히 오늘로만
+ * 고정하면 사실상 항상 비어 보이는 문제가 있었다. 결과에 roundDate를 같이 내려줘서 어느 날짜
+ * 매물인지 화면에서 보여줄 수 있게 한다(SQLite는 MIN() 하나만 쓰면 나머지 bare 컬럼이 그 최소값을
+ * 낸 행의 값을 따라간다 - region_group/round_date 둘 다 여기 해당). */
 export async function getLowestToday(env, { region, roundDate, limit = 10 } = {}) {
-  const date = toDateOnly(roundDate) || new Date().toISOString().slice(0, 10);
-  const conditions = ['round_date = ?', 'green_fee IS NOT NULL', 'official_course_name IS NOT NULL'];
-  const params = [date];
+  const today = new Date().toISOString().slice(0, 10);
+  const conditions = ['green_fee IS NOT NULL', 'official_course_name IS NOT NULL'];
+  const params = [];
+  if (roundDate) {
+    conditions.push('round_date = ?');
+    params.push(toDateOnly(roundDate));
+  } else {
+    conditions.push('round_date >= ?');
+    params.push(today);
+  }
   if (region) {
     conditions.push('region_group = ?');
     params.push(region);
   }
   const { results } = await env.PRICE_DB.prepare(
-    `SELECT official_course_name AS courseName, region_group AS regionGroup, MIN(green_fee) AS minGreenFee
+    `SELECT official_course_name AS courseName, region_group AS regionGroup, round_date AS roundDate, MIN(green_fee) AS minGreenFee
      FROM price_snapshots
      WHERE ${conditions.join(' AND ')}
      GROUP BY official_course_name
      ORDER BY minGreenFee ASC
      LIMIT ?`
   ).bind(...params, limit).all();
-  return { date, results };
+  return { date: roundDate ? toDateOnly(roundDate) : today, results };
 }
