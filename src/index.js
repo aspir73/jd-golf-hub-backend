@@ -15,6 +15,7 @@ import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBoo
 import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
+import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -404,6 +405,40 @@ export default {
         const record = await refreshWatch(env, watchRefreshMatch[1], { maxGolfpangPages: 10 });
         if (!record) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ watch: record });
+      }
+
+      // ===== 골프장 가격 대시보드(D1) - 수집은 NAS(nas-collector/)가 하고, 여기는 저장 + 조회만 =====
+      if (pathname === '/api/price-dashboard/ingest' && method === 'POST') {
+        // 이 라우트만 시크릿으로 보호한다 - 나머지 API는 이 앱 전체와 마찬가지로 무인증(개인용
+        // 단일 사용자 전제)이지만, ingest는 유일하게 대량 쓰기가 가능한 경로라 아무나 URL을 알면
+        // 누적 데이터 전체를 오염시킬 수 있어 별도로 막는다.
+        const secret = request.headers.get('X-Ingest-Secret');
+        if (!env.PRICE_INGEST_SECRET || secret !== env.PRICE_INGEST_SECRET) {
+          return error('인증 실패', 401);
+        }
+        const result = await ingestPriceSnapshot(env, await request.json());
+        return json(result);
+      }
+      if (pathname === '/api/price-dashboard/courses' && method === 'GET') {
+        return json({ courses: await listTrackedCourses(env) });
+      }
+      const priceHistoryMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/history$/);
+      if (priceHistoryMatch && method === 'GET') {
+        const days = Number(url.searchParams.get('days')) || 90;
+        return json({ history: await getCourseHistory(env, { courseName: decodeURIComponent(priceHistoryMatch[1]), days }) });
+      }
+      const priceWeekdayMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/weekday$/);
+      if (priceWeekdayMatch && method === 'GET') {
+        return json({ weekday: await getWeekdayTrend(env, { courseName: decodeURIComponent(priceWeekdayMatch[1]) }) });
+      }
+      const priceLeadtimeMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/leadtime$/);
+      if (priceLeadtimeMatch && method === 'GET') {
+        return json({ leadtime: await getLeadTimeTrend(env, { courseName: decodeURIComponent(priceLeadtimeMatch[1]) }) });
+      }
+      if (pathname === '/api/price-dashboard/lowest-today' && method === 'GET') {
+        const region = url.searchParams.get('region') || undefined;
+        const roundDate = url.searchParams.get('date') || undefined;
+        return json(await getLowestToday(env, { region, roundDate }));
       }
 
       return error('Not found', 404);

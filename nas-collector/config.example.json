@@ -1,0 +1,7 @@
+{
+  "ingest_url": "https://jd-golf-hub-backend.jaedong-jung.workers.dev/api/price-dashboard/ingest",
+  "ingest_secret": "REPLACE_ME",
+  "lookahead_days": 30,
+  "max_pages_per_search": 5,
+  "request_delay_seconds": 0.5
+}

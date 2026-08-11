@@ -2,3 +2,8 @@ node_modules/
 .wrangler/
 .dev.vars
 .vscode/
+
+# NAS 수집 스크립트 시크릿/로그 (nas-collector/README.md 참고)
+nas-collector/config.json
+nas-collector/logs/
+nas-collector/__pycache__/

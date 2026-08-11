@@ -1,5 +1,6 @@
 // 골프장 주변 맛집: 카카오 로컬 API 검색 프록시 + 개인 즐겨찾기 맛집 KV CRUD (기획서 3-4).
 import { searchNearby, CATEGORY_GROUP } from './kakao.js';
+import { findGoogleRating } from './googlePlaces.js';
 
 const FAVORITES_KEY = 'favoriteRestaurants';
 
@@ -11,14 +12,21 @@ const TIMING_KEYWORDS = {
 };
 
 export async function searchRestaurants(env, { lat, lon, timing, keyword, radius }) {
+  let list;
   if (timing === 'cafe') {
-    return searchNearby(env, { lat, lon, categoryGroupCode: CATEGORY_GROUP.CAFE, radius });
+    list = await searchNearby(env, { lat, lon, categoryGroupCode: CATEGORY_GROUP.CAFE, radius });
+  } else {
+    const q = keyword || TIMING_KEYWORDS[timing] || null;
+    list = q
+      ? await searchNearby(env, { lat, lon, query: q, radius })
+      : await searchNearby(env, { lat, lon, categoryGroupCode: CATEGORY_GROUP.FOOD, radius });
   }
-  const q = keyword || TIMING_KEYWORDS[timing] || null;
-  if (q) {
-    return searchNearby(env, { lat, lon, query: q, radius });
-  }
-  return searchNearby(env, { lat, lon, categoryGroupCode: CATEGORY_GROUP.FOOD, radius });
+  // 가게별 평점 조회는 서로 독립적이라 병렬로 처리(순차 처리 시 결과 15건이면 구글 API를
+  // 15번 순서대로 기다리게 됨 - scoring.js computeCandidateComponents와 같은 이유로 병렬화).
+  return Promise.all(list.map(async (r) => {
+    const g = await findGoogleRating(env, { name: r.name, lat: r.lat, lon: r.lon });
+    return { ...r, rating: g?.rating ?? null, reviewCount: g?.reviewCount ?? null };
+  }));
 }
 
 export async function listFavoriteRestaurants(env) {
@@ -43,6 +51,8 @@ export async function addFavoriteRestaurant(env, input) {
     courseName: input.courseName || '',
     category: input.category || '',
     placeUrl: input.placeUrl || '',
+    rating: input.rating != null ? Number(input.rating) : null,
+    reviewCount: input.reviewCount != null ? Number(input.reviewCount) : null,
     memo: input.memo || '',
     createdAt: new Date().toISOString(),
   };

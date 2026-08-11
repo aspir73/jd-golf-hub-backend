@@ -14,6 +14,16 @@ crons = ["*/30 * * * *"]
 binding = "GOLF_KV"
 id = "257448db92fb4aecbb76d1e722430dd8"
 
+# 1-1. 골프장 가격 히스토리(D1, SQL) - 집에 있는 NAS(Synology DS-214, Docker 미지원)가 매일 새벽 1시에
+#    골팡을 수집해서 POST /api/price-dashboard/ingest 로 밀어넣는다(NAS는 Cron 트리거의 서브리퀘스트
+#    한도 없이 자유롭게 돌 수 있어서 KV 대신 여기로 분리 - nas-collector/README.md 참고).
+#    시계열 집계(요일별/리드타임별 평균 등)가 많아 KV보다 SQL이 맞는 데이터라 D1을 새로 씀.
+# 생성: wrangler d1 create jd-golf-price-db / 마이그레이션: wrangler d1 execute PRICE_DB --remote --file=migrations/0001_price_snapshots.sql
+[[d1_databases]]
+binding = "PRICE_DB"
+database_name = "jd-golf-price-db"
+database_id = "33b79d83-47d6-458d-b7ec-cae376e25e1e"
+
 # 2. 기상청 단기예보/중기예보 조회서비스 API 키 (공공데이터포털, data.go.kr)
 #    "기상청_단기예보 조회서비스"(15084084, "(구)_동네예보" 아님!) + 중기예보 3종 활용신청 후
 #    발급되는 서비스키(Decoding 값) 사용 - README "기상청 단기예보 API 키 발급 및 등록" 참고
@@ -30,3 +40,9 @@ id = "257448db92fb4aecbb76d1e722430dd8"
 # 5. Anthropic API 키 - 스코어카드/화면캡처/영수증 이미지 인식(Claude Vision, 구조화 출력)
 #    console.anthropic.com에서 발급. 보안상 클라이언트가 아닌 이 Worker에서만 호출한다.
 # 설정: wrangler secret put ANTHROPIC_API_KEY
+
+# 6. 가격 대시보드 ingest 인증 시크릿 - NAS 수집 스크립트(nas-collector/)가 POST
+#    /api/price-dashboard/ingest 호출 시 X-Ingest-Secret 헤더로 보내는 값과 일치해야 함.
+#    이 앱의 다른 API는 전부 무인증(개인용 단일 사용자 전제)이지만, ingest는 유일하게 대량 쓰기가
+#    가능한 경로라 별도로 막아둔다. NAS의 config.json에도 같은 값을 넣어야 한다.
+# 설정: wrangler secret put PRICE_INGEST_SECRET (임의의 랜덤 문자열)
