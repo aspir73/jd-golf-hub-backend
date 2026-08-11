@@ -168,6 +168,20 @@ export async function getWeekdayTrend(env, { courseName }) {
   return Array.from({ length: 7 }, (_, w) => byWeekday.get(w) || { weekday: w, avgGreenFee: null, sampleCount: 0 });
 }
 
+/** 시간대(오전/오후/야간)별 평균 그린피 - "어느 시간대가 저렴한지" 학습용. */
+export async function getTimeBucketTrend(env, { courseName }) {
+  if (!courseName) throw new Error('courseName이 필요합니다');
+  const { results } = await env.PRICE_DB.prepare(
+    `SELECT time_bucket AS timeBucket, AVG(green_fee) AS avgGreenFee, COUNT(*) AS sampleCount
+     FROM price_snapshots
+     WHERE official_course_name = ? AND green_fee IS NOT NULL AND time_bucket IS NOT NULL
+     GROUP BY time_bucket`
+  ).bind(courseName).all();
+  // 오전/오후/야간 순서 고정 - 데이터 없는 시간대는 null로 표시(프론트에서 빈 막대 처리).
+  const byBucket = new Map(results.map((r) => [r.timeBucket, r]));
+  return ['오전', '오후', '야간'].map((b) => byBucket.get(b) || { timeBucket: b, avgGreenFee: null, sampleCount: 0 });
+}
+
 /** 리드타임(라운드일까지 남은 일수) 구간별 평균 그린피 - "며칠 전에 예약해야 저렴한지" 학습용. */
 export async function getLeadTimeTrend(env, { courseName }) {
   if (!courseName) throw new Error('courseName이 필요합니다');
