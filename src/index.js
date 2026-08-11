@@ -400,11 +400,20 @@ export default {
       const watchRefreshMatch = pathname.match(/^\/api\/watches\/([^/]+)\/refresh$/);
       if (watchRefreshMatch && method === 'POST') {
         // 사용자가 직접 누른 단발성 새로고침이라(크론 배치와 달리 서브리퀘스트 예산 여유가
-        // 넉넉함) 골팡 검색을 페이지 1개만 보지 않고 최대 10페이지까지 훑어서 정확한 결과를
+        // 넉넉할) 골팡 검색을 페이지 1개만 보지 않고 최대 10페이지까지 훑어서 정확한 결과를
         // 준다 - 크론 자동 갱신(refreshAllWatches)은 여전히 페이지 1만 본다.
         const record = await refreshWatch(env, watchRefreshMatch[1], { maxGolfpangPages: 10 });
         if (!record) return error('해당 모니터링을 찾을 수 없습니다', 404);
         return json({ watch: record });
+      }
+      if (pathname === '/api/watches/refresh-all' && method === 'POST') {
+        // 홈 탭 "🔄 전체 업데이트" 버튼 - 크론이 30분마다 돌리는 것과 똑같은 refreshAllWatches를
+        // 그대로 재사용한다(활성 워치 최대 15개, 페이지 1개씩). 등록된 워치를 전부 개별
+        // refreshWatch(최대 10페이지)로 돌리면 워치 수에 따라 서브리퀘스트 한도(무료 플랜 기준
+        // 요청당 50개)를 쉽게 넘겨서 사용자가 누른 버튼이 그 자리에서 실패해버릴 수 있다 -
+        // 크론에서 이미 안전하다고 검증된 값을 그대로 쓰는 쪽이 낫다.
+        const refreshedCount = await refreshAllWatches(env);
+        return json({ refreshedCount });
       }
 
       // ===== 골프장 가격 대시보드(D1) - 수집은 NAS(nas-collector/)가 하고, 여기는 저장 + 조회만 =====
