@@ -15,7 +15,7 @@ import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBoo
 import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
-import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getTimeBucketTrend, getLowestToday } from './priceDashboard.js';
+import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -420,7 +420,8 @@ export default {
         return json(result);
       }
       if (pathname === '/api/price-dashboard/courses' && method === 'GET') {
-        return json({ courses: await listTrackedCourses(env) });
+        const region = url.searchParams.get('region') || undefined;
+        return json({ courses: await listTrackedCourses(env, { region }) });
       }
       const priceHistoryMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/history$/);
       if (priceHistoryMatch && method === 'GET') {
@@ -434,10 +435,6 @@ export default {
       const priceLeadtimeMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/leadtime$/);
       if (priceLeadtimeMatch && method === 'GET') {
         return json({ leadtime: await getLeadTimeTrend(env, { courseName: decodeURIComponent(priceLeadtimeMatch[1]) }) });
-      }
-      const priceTimeBucketMatch = pathname.match(/^\/api\/price-dashboard\/course\/([^/]+)\/timebucket$/);
-      if (priceTimeBucketMatch && method === 'GET') {
-        return json({ timeBucket: await getTimeBucketTrend(env, { courseName: decodeURIComponent(priceTimeBucketMatch[1]) }) });
       }
       if (pathname === '/api/price-dashboard/lowest-today' && method === 'GET') {
         const region = url.searchParams.get('region') || undefined;

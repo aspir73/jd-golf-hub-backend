@@ -123,18 +123,26 @@ export async function ingestPriceSnapshot(env, { collectedDate, roundDate, entri
   return { inserted: batch.length, receivedEntries: entries.length, mergedFrom: resolved.length };
 }
 
-/** 대시보드 골프장 선택 목록 - 지금까지 관측된 official_course_name마다 가장 최근 수집일의 최저가를 곁들인다. */
-export async function listTrackedCourses(env) {
+/** 대시보드 골프장 선택 목록 - 지금까지 관측된 official_course_name마다 가장 최근 수집일의 최저가를
+ * 곁들인다. region을 주면 그 지역에서 한 번이라도 관측된 골프장만 추려서, 목록이 길 때 지역으로
+ * 좁혀서 찾을 수 있게 한다(프론트 "골프장별 추이" 카드의 지역 필터). */
+export async function listTrackedCourses(env, { region } = {}) {
+  const where = ['official_course_name IS NOT NULL'];
+  const params = [];
+  if (region) {
+    where.push('region_group = ?');
+    params.push(region);
+  }
   const { results } = await env.PRICE_DB.prepare(
     `SELECT official_course_name AS courseName,
             COUNT(*) AS sampleCount,
             MIN(green_fee) AS minGreenFee,
             MAX(collected_date) AS lastCollectedDate
      FROM price_snapshots
-     WHERE official_course_name IS NOT NULL
+     WHERE ${where.join(' AND ')}
      GROUP BY official_course_name
      ORDER BY courseName`
-  ).all();
+  ).bind(...params).all();
   return results;
 }
 
@@ -153,33 +161,28 @@ export async function getCourseHistory(env, { courseName, days = 90 }) {
   return results;
 }
 
-/** 요일별 평균 그린피 - "무슨 요일이 저렴한지" 학습용. */
+const TIME_BUCKETS = ['오전', '오후', '야간'];
+
+/** 요일 × 시간대(오전/오후/야간)별 평균 그린피 - "무슨 요일, 몇 시가 저렴한지"를 한 번에 보기 위해
+ * 두 축을 같이 준다(예전엔 요일/시간대를 별도 차트 2개로 나눴는데, 시간대별 차트를 없애고 여기에
+ * 합침). 7요일 × 3시간대 = 21칸을 항상 다 채워서 반환 - 데이터 없는 칸은 null(프론트에서 빈 막대). */
 export async function getWeekdayTrend(env, { courseName }) {
   if (!courseName) throw new Error('courseName이 필요합니다');
   const { results } = await env.PRICE_DB.prepare(
-    `SELECT weekday, AVG(green_fee) AS avgGreenFee, COUNT(*) AS sampleCount
-     FROM price_snapshots
-     WHERE official_course_name = ? AND green_fee IS NOT NULL
-     GROUP BY weekday
-     ORDER BY weekday`
-  ).bind(courseName).all();
-  // 0(일)~6(토) 전부 채워서 반환 - 데이터 없는 요일은 null로 표시(프론트에서 빈 막대 처리).
-  const byWeekday = new Map(results.map((r) => [r.weekday, r]));
-  return Array.from({ length: 7 }, (_, w) => byWeekday.get(w) || { weekday: w, avgGreenFee: null, sampleCount: 0 });
-}
-
-/** 시간대(오전/오후/야간)별 평균 그린피 - "어느 시간대가 저렴한지" 학습용. */
-export async function getTimeBucketTrend(env, { courseName }) {
-  if (!courseName) throw new Error('courseName이 필요합니다');
-  const { results } = await env.PRICE_DB.prepare(
-    `SELECT time_bucket AS timeBucket, AVG(green_fee) AS avgGreenFee, COUNT(*) AS sampleCount
+    `SELECT weekday, time_bucket AS timeBucket, AVG(green_fee) AS avgGreenFee, COUNT(*) AS sampleCount
      FROM price_snapshots
      WHERE official_course_name = ? AND green_fee IS NOT NULL AND time_bucket IS NOT NULL
-     GROUP BY time_bucket`
+     GROUP BY weekday, time_bucket`
   ).bind(courseName).all();
-  // 오전/오후/야간 순서 고정 - 데이터 없는 시간대는 null로 표시(프론트에서 빈 막대 처리).
-  const byBucket = new Map(results.map((r) => [r.timeBucket, r]));
-  return ['오전', '오후', '야간'].map((b) => byBucket.get(b) || { timeBucket: b, avgGreenFee: null, sampleCount: 0 });
+  const byKey = new Map(results.map((r) => [`${r.weekday}::${r.timeBucket}`, r]));
+  const grid = [];
+  for (let weekday = 0; weekday < 7; weekday++) {
+    for (const timeBucket of TIME_BUCKETS) {
+      const found = byKey.get(`${weekday}::${timeBucket}`);
+      grid.push(found || { weekday, timeBucket, avgGreenFee: null, sampleCount: 0 });
+    }
+  }
+  return grid;
 }
 
 /** 리드타임(라운드일까지 남은 일수) 구간별 평균 그린피 - "며칠 전에 예약해야 저렴한지" 학습용. */
