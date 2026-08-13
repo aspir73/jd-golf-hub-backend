@@ -241,7 +241,12 @@ export function recommendOutfit(hourly) {
 /** GET /api/weather?lat=&lon=&date= 처리. env.KMA_API_KEY 필요.
  *  date를 생략하면 오늘(KST), 지정하면 그 날짜의 시간대별 예보를 돌려준다.
  *  기상청 단기예보(getVilageFcst)는 발표시각 기준 최대 약 3일치를 함께 내려주므로,
- *  base_date 기준 +2일(모레)까지만 지원한다 — 그 밖의 날짜는 명확한 에러로 안내한다. */
+ *  base_date 기준 +3일까지 지원한다(실측 확인: 17시 발표 기준 +3일치 시간대별 데이터 290건
+ *  정상 수신 - 예전엔 +2일로만 제한해뒀는데, 그러면 중기예보 쪽만 써야 하는 +3일(정확히 중기
+ *  예보의 최솟값 경계)이 단기/중기 양쪽에서 다 비는 사각지대가 됐었다. 기상청 중기예보는 갓
+ *  갱신된 최신 발표엔 3~4일 뒤 필드가 아직 안 채워진 경우가 실측으로 확인돼서, +3일은 아예
+ *  단기예보 쪽으로 넘겨버리는 게 더 안전하다 - fetchMidTermWeather의 diff<4 경계와 맞물림).
+ *  +3일보다 먼 날짜는 명확한 에러로 안내한다. */
 export async function fetchWeather(env, lat, lon, date) {
   if (!env.KMA_API_KEY) {
     throw new Error('KMA_API_KEY가 설정되지 않았습니다 (wrangler secret put KMA_API_KEY)');
@@ -255,8 +260,8 @@ export async function fetchWeather(env, lat, lon, date) {
   if (diff < 0) {
     throw new Error('과거 날짜는 조회할 수 없습니다.');
   }
-  if (diff > 2) {
-    throw new Error('기상청 단기예보는 오늘부터 모레(최대 2일 뒤)까지만 제공됩니다. 더 먼 날짜는 임박해서 다시 확인해주세요.');
+  if (diff > 3) {
+    throw new Error('기상청 단기예보는 오늘부터 3일 뒤까지만 제공됩니다. 더 먼 날짜는 임박해서 다시 확인해주세요.');
   }
 
   const url = new URL(KMA_ENDPOINT);
@@ -370,8 +375,60 @@ function recommendOutfitMid({ tempMin, tempMax, pop }) {
   };
 }
 
+/** tmFc(발표시각, "YYYYMMDDHHmm")의 한 슬롯 전("06시"<->"18시", 날짜도 필요시 하루 당김)을 계산 */
+function previousMidTmFc(tmFc) {
+  const datePart = tmFc.slice(0, 8);
+  const slot = tmFc.slice(8);
+  if (slot === '1800') return `${datePart}0600`;
+  const y = Number(datePart.slice(0, 4)), m = Number(datePart.slice(4, 6)) - 1, d = Number(datePart.slice(6, 8));
+  const prev = new Date(Date.UTC(y, m, d - 1));
+  const yyyy = prev.getUTCFullYear();
+  const mm = String(prev.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(prev.getUTCDate()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}1800`;
+}
+
+/** tmFc 하나로 land+ta를 조회해서 실제 날짜(YYYYMMDD) 기준으로 다시 정리한다 - dayOffset은
+ * tmFc(발표시각) 기준이라 발표가 바뀌면 같은 달력 날짜라도 번호가 밀리므로, 날짜 문자열을 키로
+ * 써야 서로 다른 tmFc끼리 결과를 안전하게 비교/폴백할 수 있다. */
+async function fetchMidByDate(env, region, tmFc) {
+  const [landItem, taItem] = await Promise.all([
+    fetchMidRaw(env, MID_LAND_ENDPOINT, region.landRegId, tmFc),
+    fetchMidRaw(env, MID_TA_ENDPOINT, region.taRegId, tmFc),
+  ]);
+  const landByDate = new Map();
+  for (const e of parseMidLandItem(landItem)) {
+    const dateStr = midDayOffsetToDate(tmFc, e.dayOffset);
+    if (!landByDate.has(dateStr)) landByDate.set(dateStr, []);
+    landByDate.get(dateStr).push(e);
+  }
+  const taByDate = new Map();
+  for (const t of parseMidTaItem(taItem)) {
+    taByDate.set(midDayOffsetToDate(tmFc, t.dayOffset), t);
+  }
+  return { landByDate, taByDate };
+}
+
+/** targetStr(YYYYMMDD)의 중기예보를 tmFc부터 최대 3번(각 12시간씩) 더 과거 발표까지 훑어서 처음
+ * 발견되는 데이터를 쓴다. 실측 확인된 문제: 막 갱신된 최신 발표엔 가까운 날짜(3~4일 뒤) 필드가
+ * 통째로 빠져있는 경우가 있었다(wf3Am/wf4Am 등이 응답 자체에 없음 - wf5 이상만 있었음). 같은 날
+ * 12시간 전 발표만으로는 날짜 오프셋이 안 바뀌어(하루 단위 계산이라) 부족할 수 있어, 하루 전
+ * 발표까지 필요하면 넘어간다 - 대상 날짜와의 diff가 10일을 넘어서면(범위 밖) 더 뒤져도 의미가
+ * 없으니 중단한다. */
+async function findMidDataForDate(env, region, tmFc, targetStr) {
+  let candidate = tmFc;
+  for (let step = 0; step <= 3; step++) {
+    if (step > 0) candidate = previousMidTmFc(candidate);
+    if (dateDiffDays(candidate.slice(0, 8), targetStr) > 10) break;
+    const { landByDate, taByDate } = await fetchMidByDate(env, region, candidate);
+    const dayEntries = landByDate.get(targetStr) || [];
+    if (dayEntries.length) return { dayEntries, ta: taByDate.get(targetStr) || null, tmFcUsed: candidate };
+  }
+  return { dayEntries: [], ta: null, tmFcUsed: tmFc };
+}
+
 /** GET /api/weather/midterm?lat=&lon=&date= 처리. env.KMA_API_KEY, env.KAKAO_API_KEY 필요.
- *  단기예보(최대 모레)로 못 채우는 3~10일 뒤를 기상청 중기예보(getMidLandFcst+getMidTa)로 채운다.
+ *  단기예보(최대 +3일)로 못 채우는 4~10일 뒤를 기상청 중기예보(getMidLandFcst+getMidTa)로 채운다.
  *  좌표 -> 도(道) 단위 지역 해석은 카카오 역지오코딩 + resolveMidRegion으로 하고 KV에 영구 캐싱한다. */
 export async function fetchMidTermWeather(env, lat, lon, date) {
   if (!env.KMA_API_KEY) {
@@ -382,31 +439,20 @@ export async function fetchMidTermWeather(env, lat, lon, date) {
 
   const tmFc = resolveMidTmFc(new Date());
   const diff = dateDiffDays(tmFc.slice(0, 8), targetStr);
-  if (diff < 3) {
-    throw new Error('3일 이내 날짜는 /api/weather(단기예보)를 사용해주세요.');
+  if (diff < 4) {
+    throw new Error('4일 이내 날짜는 /api/weather(단기예보)를 사용해주세요.');
   }
   if (diff > 10) {
     throw new Error('기상청 중기예보는 최대 10일 뒤까지만 제공됩니다.');
   }
 
   const region = await resolveMidRegion(env, lat, lon);
-  const [landItem, taItem] = await Promise.all([
-    fetchMidRaw(env, MID_LAND_ENDPOINT, region.landRegId, tmFc),
-    fetchMidRaw(env, MID_TA_ENDPOINT, region.taRegId, tmFc),
-  ]);
-  const landByDay = parseMidLandItem(landItem);
-  const taByDay = new Map(parseMidTaItem(taItem).map((t) => [t.dayOffset, t]));
-
-  // dayOffset -> 실제 날짜 매핑 후, targetStr에 해당하는 오전/오후(또는 종일) 항목만 추림
-  const dayEntries = landByDay
-    .map((e) => ({ ...e, date: midDayOffsetToDate(tmFc, e.dayOffset) }))
-    .filter((e) => e.date === targetStr);
+  const { dayEntries, ta } = await findMidDataForDate(env, region, tmFc, targetStr);
 
   if (!dayEntries.length) {
     throw new Error('해당 날짜의 중기예보 데이터가 아직 없습니다. 다음 발표(06시/18시) 이후 다시 확인해주세요.');
   }
 
-  const ta = taByDay.get(dayEntries[0].dayOffset) || null;
   const periods = dayEntries.map((e) => ({ ampm: e.ampm, sky: e.sky, pop: e.pop }));
   const outfit = recommendOutfitMid({ tempMin: ta?.min ?? null, tempMax: ta?.max ?? null, pop: Math.max(...periods.map((p) => p.pop ?? 0)) });
 
@@ -453,7 +499,9 @@ export async function fetchWeekAheadWeather(env, lat, lon) {
   const items = data.response.body?.items?.item || [];
 
   const days = [];
-  for (let offset = 0; offset <= 2; offset++) {
+  // 단기예보는 +3일까지(fetchWeather와 동일 근거로 확장 - 실측 확인: 발표시각 기준 +3일치
+  // 시간대별 데이터가 정상 수신됨). 중기예보(아래)는 +4일부터 시작해서 겹치지 않게 한다.
+  for (let offset = 0; offset <= 3; offset++) {
     const dateStr = addDaysToDateStr(todayStr, offset);
     const hourly = groupByHour(items, dateStr);
     if (!hourly.length) continue;
@@ -471,20 +519,30 @@ export async function fetchWeekAheadWeather(env, lat, lon) {
   try {
     const tmFc = resolveMidTmFc(new Date());
     const region = await resolveMidRegion(env, lat, lon);
-    const [landItem, taItem] = await Promise.all([
-      fetchMidRaw(env, MID_LAND_ENDPOINT, region.landRegId, tmFc),
-      fetchMidRaw(env, MID_TA_ENDPOINT, region.taRegId, tmFc),
-    ]);
-    const landByDay = parseMidLandItem(landItem);
-    const taByDay = new Map(parseMidTaItem(taItem).map((t) => [t.dayOffset, t]));
-    for (let offset = 3; offset <= 6; offset++) {
-      const wantedDateStr = addDaysToDateStr(todayStr, offset);
-      const midDateStr = midDayOffsetToDate(tmFc, offset);
-      // 중기예보 dayOffset은 "발표시각(tmFc) 기준" +N일이라 오늘 기준 +N일과 살짝 어긋날 수 있다 -
-      // 실제 날짜로 다시 맞춰봐서 안 맞으면(발표 시점 오차) 조용히 건너뛴다.
-      if (midDateStr !== wantedDateStr) continue;
-      const ta = taByDay.get(offset);
-      const landEntries = landByDay.filter((e) => e.dayOffset === offset);
+    const wantedDates = [];
+    for (let offset = 4; offset <= 6; offset++) wantedDates.push(addDaysToDateStr(todayStr, offset));
+
+    // findMidDataForDate와 같은 이유(막 갱신된 최신 발표엔 가까운 날짜 필드가 비어있는 경우가
+    // 있었음)로 최대 3번 더 과거 발표까지 훑되, offset 4개를 한꺼번에 채워야 하므로 매번 새로
+    // 부르지 않고 지금까지 모은 결과에 계속 병합해나간다(이미 채워진 날짜가 있는 최신 데이터가
+    // 우선권을 가지도록 병합 순서를 맞춤 - 뒤에 스프레드한 쪽이 같은 키를 덮어씀).
+    let landByDate = new Map();
+    let taByDate = new Map();
+    let candidate = tmFc;
+    for (let step = 0; step <= 3; step++) {
+      if (step > 0) candidate = previousMidTmFc(candidate);
+      if (dateDiffDays(candidate.slice(0, 8), wantedDates[0]) > 10) break;
+      const data = await fetchMidByDate(env, region, candidate);
+      landByDate = new Map([...data.landByDate, ...landByDate]);
+      taByDate = new Map([...data.taByDate, ...taByDate]);
+      if (wantedDates.every((d) => landByDate.has(d))) break;
+    }
+
+    for (let offset = 4; offset <= 6; offset++) {
+      const wantedDateStr = wantedDates[offset - 4];
+      const landEntries = landByDate.get(wantedDateStr) || [];
+      if (!landEntries.length) continue;
+      const ta = taByDate.get(wantedDateStr);
       const repSky = landEntries.find((e) => e.ampm === 'pm')?.sky ?? landEntries[0]?.sky ?? '-';
       days.push({
         date: toIsoDate(wantedDateStr),
