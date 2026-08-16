@@ -15,6 +15,20 @@ async function saveScores(env, scores) {
 const ALLOWED_SOURCES = ['직접입력', '보이스캐디', '스마트스코어', '종이스코어카드'];
 const ALLOWED_ROUND_TYPES = ['필드', '스크린'];
 
+/** 홀별 상세 입력(스코어 탭 "홀별 상세 입력" 모드) 한 홀 - par는 course-info에서 가져온 값을 그대로
+ * 스냅샷해서 저장한다(나중에 그 골프장의 코스정보가 수정돼도 이미 기록한 라운드의 파는 안 바뀌게). */
+function normalizeHoleScore(h) {
+  const no = Number(h?.no);
+  if (!Number.isFinite(no)) return null;
+  return {
+    no,
+    par: h?.par != null && h.par !== '' ? Number(h.par) : null,
+    shots: h?.shots != null && h.shots !== '' ? Number(h.shots) : null,
+    putts: h?.putts != null && h.putts !== '' ? Number(h.putts) : null,
+    score: h?.score != null && h.score !== '' ? Number(h.score) : null,
+  };
+}
+
 function normalizeScore(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -22,6 +36,10 @@ function normalizeScore(input, existing = {}) {
     date: input.date ?? existing.date ?? now.slice(0, 10),
     courseName: input.courseName ?? existing.courseName ?? '',
     courseSubName: input.courseSubName ?? existing.courseSubName ?? '',
+    // 홀별 상세 입력 모드에서만 채워짐(어느 코스로 OUT/IN을 돌았는지) - 간단 입력 모드는 비워둔다.
+    outCourseName: input.outCourseName ?? existing.outCourseName ?? '',
+    inCourseName: input.inCourseName ?? existing.inCourseName ?? '',
+    holes: Array.isArray(input.holes) ? input.holes.map(normalizeHoleScore).filter(Boolean) : existing.holes ?? null,
     totalScore: input.totalScore != null ? Number(input.totalScore) : existing.totalScore ?? null,
     fir: input.fir != null ? Number(input.fir) : existing.fir ?? null,
     gir: input.gir != null ? Number(input.gir) : existing.gir ?? null,

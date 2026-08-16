@@ -16,6 +16,7 @@ import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
 import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
+import { listCourseInfo, getCourseInfoByName, addCourseInfo, updateCourseInfo, deleteCourseInfo } from './courseInfo.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -94,6 +95,28 @@ export default {
       if (scoreMatch && method === 'DELETE') {
         const ok = await deleteScore(env, scoreMatch[1]);
         if (!ok) return error('해당 기록을 찾을 수 없습니다', 404);
+        return json({ deleted: true });
+      }
+
+      // ===== 골프장 코스/홀 정보(직접 입력 - 스코어 탭 "홀별 상세 입력"에서 파 정보 채우는 데 사용) =====
+      if (pathname === '/api/course-info' && method === 'GET') {
+        const courseName = url.searchParams.get('courseName');
+        if (courseName) return json({ courseInfo: await getCourseInfoByName(env, courseName) });
+        return json({ courseInfoList: await listCourseInfo(env) });
+      }
+      if (pathname === '/api/course-info' && method === 'POST') {
+        const record = await addCourseInfo(env, await request.json());
+        return json({ courseInfo: record }, 201);
+      }
+      const courseInfoMatch = pathname.match(/^\/api\/course-info\/([^/]+)$/);
+      if (courseInfoMatch && method === 'PUT') {
+        const record = await updateCourseInfo(env, courseInfoMatch[1], await request.json());
+        if (!record) return error('해당 코스정보를 찾을 수 없습니다', 404);
+        return json({ courseInfo: record });
+      }
+      if (courseInfoMatch && method === 'DELETE') {
+        const ok = await deleteCourseInfo(env, courseInfoMatch[1]);
+        if (!ok) return error('해당 코스정보를 찾을 수 없습니다', 404);
         return json({ deleted: true });
       }
 
