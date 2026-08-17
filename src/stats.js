@@ -6,16 +6,7 @@ function avg(nums) {
   return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
 }
 
-/** source(직접입력/보이스캐디/스마트스코어/종이스코어카드), roundType(필드/스크린) 필터링 후 통계 계산 */
-export function computeStats(scores, filters = {}) {
-  const { source, roundType } = filters;
-  const filtered = scores.filter(
-    (s) => (!source || s.source === source) && (!roundType || s.roundType === roundType)
-  );
-  return computeStatsRaw(filtered);
-}
-
-function computeStatsRaw(scores) {
+export function computeStats(scores) {
   const sorted = [...scores].sort((a, b) => (a.date < b.date ? 1 : -1)); // 최신순
   const recent10 = sorted.slice(0, 10);
 

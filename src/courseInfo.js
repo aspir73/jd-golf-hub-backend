@@ -19,7 +19,6 @@ function normalizeHole(h, no) {
   return {
     no,
     par: [3, 4, 5].includes(par) ? par : 4,
-    handicap: h?.handicap != null && h.handicap !== '' ? Number(h.handicap) : null,
   };
 }
 

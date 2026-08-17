@@ -122,9 +122,7 @@ export default {
 
       // ===== 통계 =====
       if (pathname === '/api/stats' && method === 'GET') {
-        const source = url.searchParams.get('source') || undefined;
-        const roundType = url.searchParams.get('roundType') || undefined;
-        return json(computeStats(await listScores(env), { source, roundType }));
+        return json(computeStats(await listScores(env)));
       }
 
       // ===== 설정(집 주소) =====
