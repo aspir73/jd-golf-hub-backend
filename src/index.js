@@ -1,4 +1,4 @@
-import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -79,9 +79,20 @@ export default {
         return json(await fetchWeekAheadWeather(env, lat, lon));
       }
 
-      // 홈 탭 "주간 골프 기상도" - 경기·강원·충청 3개 고정 권역, 위치 권한 불필요
+      // 홈 탭 "주간 골프 기상도" - 경기남부/북부·경춘·강원·충청 5개 고정 권역, 위치 권한 불필요
       if (pathname === '/api/weather/board' && method === 'GET') {
         return json(await fetchGolfWeatherBoard(env));
+      }
+
+      // "티타임 모니터링"(워치 그룹) 카드 날씨 타일 전용 - 특정 좌표의 특정 날짜 하루치(Open-Meteo)
+      if (pathname === '/api/weather/openmeteo' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        const date = url.searchParams.get('date');
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !date) {
+          return error('lat, lon, date 쿼리 파라미터가 필요합니다');
+        }
+        return json(await fetchOpenMeteoForDate(lat, lon, date));
       }
 
       // ===== 스코어 =====

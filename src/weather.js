@@ -580,10 +580,10 @@ const WMO_SKY_LABEL = {
   95: '비', 96: '비', 99: '비',
 };
 
-/** Open-Meteo 일별 예보(최대 16일, 여기선 7일만 요청) - 온도(최저/최고)·강수확률·바람(최대풍속)·
- * 습도(최저/최고)·대표 하늘상태. API 키 불필요(비상업적 용도), 명시적 요청 한도 없음. 바람/습도도
- * KMA 중기예보와 달리 7일 전체를 제공한다(실측 확인됨). */
-async function fetchOpenMeteoDaily(lat, lon) {
+/** Open-Meteo 일별 예보(최대 16일) - 온도(최저/최고)·강수확률·바람(최대풍속)·습도(최저/최고)·
+ * 대표 하늘상태. API 키 불필요(비상업적 용도), 명시적 요청 한도 없음. 바람/습도도 KMA 중기예보와
+ * 달리 16일 내내 제공한다(실측 확인됨). */
+async function fetchOpenMeteoDaily(lat, lon, forecastDays = 7) {
   const url = new URL(OPEN_METEO_ENDPOINT);
   url.searchParams.set('latitude', String(lat));
   url.searchParams.set('longitude', String(lon));
@@ -592,7 +592,7 @@ async function fetchOpenMeteoDaily(lat, lon) {
     'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max,relative_humidity_2m_max,relative_humidity_2m_min'
   );
   url.searchParams.set('timezone', 'Asia/Seoul');
-  url.searchParams.set('forecast_days', '7');
+  url.searchParams.set('forecast_days', String(forecastDays));
 
   // Worker에서 5개 권역을 동시에(Promise.all) 호출하면 같은 오리진에 순간적으로 여러 연결이 몰려
   // Cloudflare-Open-Meteo 사이 TLS 핸드셰이크가 가끔 HTTP 525로 실패하는 게 실측됨(Open-Meteo 자체
@@ -668,4 +668,15 @@ export async function fetchGolfWeatherBoard(env) {
   }
   await env.GOLF_KV.put(GOLF_WEATHER_BOARD_CACHE_KEY, JSON.stringify({ regions, cachedAt: Date.now() }), { expirationTtl: 60 * 60 });
   return { regions };
+}
+
+/** GET /api/weather/openmeteo - 특정 좌표·특정 날짜 하루치 예보(온도/강수확률/바람/습도/하늘상태).
+ * "티타임 모니터링"(워치 그룹) 카드의 날씨 타일 전용 - KMA는 단기(0~3일)/중기(4~10일) API가 나뉘어
+ * 있어 호출이 복잡하고 중기는 바람/습도가 비어 있었는데, Open-Meteo는 최대 16일을 한 번에·한 API로
+ * 받을 수 있어 이쪽으로 옮긴다. 날짜가 예보 범위 밖이면 null을 던진다(호출부에서 타일을 숨김 처리). */
+export async function fetchOpenMeteoForDate(lat, lon, dateStr) {
+  const days = await fetchOpenMeteoDaily(lat, lon, 16);
+  const day = days.find((d) => d.date === dateStr);
+  if (!day) throw new Error(`${dateStr}는 Open-Meteo 예보 범위(오늘부터 16일) 밖입니다.`);
+  return day;
 }
