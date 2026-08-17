@@ -51,9 +51,9 @@ function normalizeScore(input, existing = {}) {
     teeBox: input.teeBox ?? existing.teeBox ?? '',
     kgaCourseRating: input.kgaCourseRating != null ? Number(input.kgaCourseRating) : existing.kgaCourseRating ?? null,
     kgaSlopeRating: input.kgaSlopeRating != null ? Number(input.kgaSlopeRating) : existing.kgaSlopeRating ?? null,
+    // KGA 공식 데이터(야드)든 코스정보 직접입력(미터)이든, 프론트에서 항상 미터로 환산해서
+    // 보내주므로 여기는 단위 구분 없이 미터로 저장한다.
     kgaCourseLength: input.kgaCourseLength != null ? Number(input.kgaCourseLength) : existing.kgaCourseLength ?? null,
-    // KGA 공식 데이터는 야드, 코스정보에 사용자가 직접 입력한 값은 미터 - 출처가 달라 단위도 다르다.
-    kgaCourseLengthUnit: input.kgaCourseLengthUnit ?? existing.kgaCourseLengthUnit ?? '',
     status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
