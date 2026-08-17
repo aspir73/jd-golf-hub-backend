@@ -37,6 +37,16 @@ function normalizeHoleScore(h) {
   };
 }
 
+/** 동반자 1명 - 이름 + 그날 그 동반자의 최종 스코어(선택, 참고 기록일 뿐 통계 집계 대상은 아님). */
+function normalizeCompanion(c) {
+  const name = (c?.name || '').trim();
+  if (!name) return null;
+  return {
+    name,
+    score: c?.score != null && c.score !== '' ? Number(c.score) : null,
+  };
+}
+
 function normalizeScore(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -62,8 +72,8 @@ function normalizeScore(input, existing = {}) {
     // 보내주므로 여기는 단위 구분 없이 미터로 저장한다.
     kgaCourseLength: input.kgaCourseLength != null ? Number(input.kgaCourseLength) : existing.kgaCourseLength ?? null,
     status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
-    // 동반자 이름 목록(자유 텍스트) - 통계 집계 없이 그냥 기록용.
-    companions: Array.isArray(input.companions) ? input.companions.filter((n) => n && n.trim()) : existing.companions ?? [],
+    // 동반자 목록(이름 + 그 동반자의 최종 스코어) - 통계 집계 없이 그냥 기록용.
+    companions: Array.isArray(input.companions) ? input.companions.map(normalizeCompanion).filter(Boolean) : existing.companions ?? [],
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
     updatedAt: now,
