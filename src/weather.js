@@ -680,3 +680,10 @@ export async function fetchOpenMeteoForDate(lat, lon, dateStr) {
   if (!day) throw new Error(`${dateStr}는 Open-Meteo 예보 범위(오늘부터 16일) 밖입니다.`);
   return day;
 }
+
+/** GET /api/weather/course - 날씨 탭 "골프장 날씨 검색" 전용. 임의의 좌표(즐겨찾기에 없는
+ * 골프장도 카카오 장소검색으로 좌표만 찾으면 됨) 7일 예보를 그대로 돌려준다 - 골프장 단위라
+ * 호출량이 "주간 골프 기상도"(고정 5권역)보다 훨씬 적어서 캐시는 두지 않는다. */
+export async function fetchOpenMeteoWeekly(lat, lon) {
+  return { days: await fetchOpenMeteoDaily(lat, lon, 7) };
+}

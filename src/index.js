@@ -1,4 +1,4 @@
-import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -93,6 +93,16 @@ export default {
           return error('lat, lon, date 쿼리 파라미터가 필요합니다');
         }
         return json(await fetchOpenMeteoForDate(lat, lon, date));
+      }
+
+      // 날씨 탭 "골프장 날씨 검색" - 검색해서 추가한 골프장의 7일 온도·강우 예보(Open-Meteo)
+      if (pathname === '/api/weather/course' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          return error('lat, lon 쿼리 파라미터가 필요합니다');
+        }
+        return json(await fetchOpenMeteoWeekly(lat, lon));
       }
 
       // ===== 스코어 =====
