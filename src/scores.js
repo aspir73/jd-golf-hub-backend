@@ -52,6 +52,8 @@ function normalizeScore(input, existing = {}) {
     kgaCourseRating: input.kgaCourseRating != null ? Number(input.kgaCourseRating) : existing.kgaCourseRating ?? null,
     kgaSlopeRating: input.kgaSlopeRating != null ? Number(input.kgaSlopeRating) : existing.kgaSlopeRating ?? null,
     kgaCourseLength: input.kgaCourseLength != null ? Number(input.kgaCourseLength) : existing.kgaCourseLength ?? null,
+    // KGA 공식 데이터는 야드, 코스정보에 사용자가 직접 입력한 값은 미터 - 출처가 달라 단위도 다르다.
+    kgaCourseLengthUnit: input.kgaCourseLengthUnit ?? existing.kgaCourseLengthUnit ?? '',
     status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,

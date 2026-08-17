@@ -17,6 +17,7 @@ import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseD
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
 import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
 import { listCourseInfo, getCourseInfoByName, addCourseInfo, updateCourseInfo, deleteCourseInfo } from './courseInfo.js';
+import { findKgaRating } from './kgaCourseRating.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -118,6 +119,13 @@ export default {
         const ok = await deleteCourseInfo(env, courseInfoMatch[1]);
         if (!ok) return error('해당 코스정보를 찾을 수 없습니다', 404);
         return json({ deleted: true });
+      }
+
+      // ===== KGA 공식 코스레이팅(경기·강원·충북·충남 111개 골프장, 정적 데이터) =====
+      if (pathname === '/api/kga-rating' && method === 'GET') {
+        const courseName = url.searchParams.get('courseName');
+        if (!courseName) return error('courseName 쿼리 파라미터가 필요합니다');
+        return json({ rating: findKgaRating(courseName) });
       }
 
       // ===== 통계 =====
