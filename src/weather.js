@@ -559,132 +559,113 @@ export async function fetchWeekAheadWeather(env, lat, lon) {
   return { days: days.sort((a, b) => a.dayOffset - b.dayOffset) };
 }
 
-/** "주간 골프 기상도"용 - 기온뿐 아니라 강수확률(POP)·바람(WSD, 그날 최댓값)·습도(REH, 그날 평균)까지
- * 포함한 일별 요약. 단기예보(0~3일)는 하루치 시간별 값에서 뽑아내고, 중기예보(4~6일)는 KMA 중기예보
- * 자체에 바람·습도 필드가 아예 없어서 그 둘은 null로 둔다(프론트에서 "-"로 표시 - 진짜 데이터 공백이지
- * 버그가 아니다). fetchWeekAheadWeather와 로직 뼈대는 같지만 그쪽은 기온만 요약해서 쓰는 용도(MY골프장
- * 카드 등)라 건드리지 않고 이 함수를 따로 뒀다. */
-async function fetchDailyWeatherDetailed(env, lat, lon) {
-  const { nx, ny } = latLonToGrid(lat, lon);
-  const { base_date, base_time } = resolveBaseDateTime();
-  const todayStr = kstTodayString();
+// "주간 골프 기상도"는 KMA 대신 Open-Meteo(https://open-meteo.com)를 쓴다. KMA 중기예보는 일일
+// 요청 한도가 있고(실측: LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR로 막힘) 단기/중기 API가
+// 나뉘어 있어 복잡하고, 바람·습도는 3일 초과분을 제공하지 않는데, Open-Meteo는 비상업적 용도는 API
+// 키 없이 좌표만으로 온도·강우·바람·습도를 7일 전체 받을 수 있어 이 화면에는 훨씬 간단하고 안정적이다.
+// 앱의 다른 날씨 기능(날씨 탭, 부킹카드 배지, MY골프장 카드 등)은 이번엔 그대로 KMA를 쓴다 - 범위를
+// 좁혀서 우선 이 화면만 바꿈.
+const OPEN_METEO_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
 
-  const url = new URL(KMA_ENDPOINT);
-  url.searchParams.set('serviceKey', env.KMA_API_KEY);
-  url.searchParams.set('numOfRows', '1000');
-  url.searchParams.set('pageNo', '1');
-  url.searchParams.set('dataType', 'JSON');
-  url.searchParams.set('base_date', base_date);
-  url.searchParams.set('base_time', base_time);
-  url.searchParams.set('nx', String(nx));
-  url.searchParams.set('ny', String(ny));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`기상청 API 호출 실패: HTTP ${res.status}`);
+// WMO 날씨코드(Open-Meteo daily weather_code) -> 이 앱에서 이미 쓰는 하늘상태 라벨로 매핑
+// (GOLF_WEATHER_SKY_ICON, 프론트 index.html 참고 - 라벨 문자열을 맞춰야 아이콘이 나온다).
+const WMO_SKY_LABEL = {
+  0: '맑음', 1: '맑음', 2: '구름많음', 3: '흐림',
+  45: '흐림', 48: '흐림',
+  51: '비', 53: '비', 55: '비', 56: '비/눈', 57: '비/눈',
+  61: '비', 63: '비', 65: '비', 66: '비/눈', 67: '비/눈',
+  71: '눈', 73: '눈', 75: '눈', 77: '눈',
+  80: '소나기', 81: '소나기', 82: '소나기',
+  85: '눈', 86: '눈',
+  95: '비', 96: '비', 99: '비',
+};
+
+/** Open-Meteo 일별 예보(최대 16일, 여기선 7일만 요청) - 온도(최저/최고)·강수확률·바람(최대풍속)·
+ * 습도(최저/최고)·대표 하늘상태. API 키 불필요(비상업적 용도), 명시적 요청 한도 없음. 바람/습도도
+ * KMA 중기예보와 달리 7일 전체를 제공한다(실측 확인됨). */
+async function fetchOpenMeteoDaily(lat, lon) {
+  const url = new URL(OPEN_METEO_ENDPOINT);
+  url.searchParams.set('latitude', String(lat));
+  url.searchParams.set('longitude', String(lon));
+  url.searchParams.set(
+    'daily',
+    'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max,relative_humidity_2m_max,relative_humidity_2m_min'
+  );
+  url.searchParams.set('timezone', 'Asia/Seoul');
+  url.searchParams.set('forecast_days', '7');
+
+  // Worker에서 5개 권역을 동시에(Promise.all) 호출하면 같은 오리진에 순간적으로 여러 연결이 몰려
+  // Cloudflare-Open-Meteo 사이 TLS 핸드셰이크가 가끔 HTTP 525로 실패하는 게 실측됨(Open-Meteo 자체
+  // 문제는 아님 - 직접 반복 호출은 항상 성공). 일시적 실패이므로 짧게 한 번 재시도한다.
+  let res;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      res = await fetch(url.toString());
+      if (res.ok) break;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!res || !res.ok) {
+    const bodyText = res ? await res.text().catch(() => '') : '';
+    throw new Error(`Open-Meteo API 호출 실패: ${lastErr?.message || 'unknown'} body="${bodyText.slice(0, 200)}"`);
+  }
   const data = await res.json();
-  const header = data?.response?.header;
-  if (!header || header.resultCode !== '00') throw new Error(`기상청 API 오류: ${header?.resultMsg || '알 수 없는 오류'}`);
-  const items = data.response.body?.items?.item || [];
-
-  const days = [];
-  for (let offset = 0; offset <= 3; offset++) {
-    const dateStr = addDaysToDateStr(todayStr, offset);
-    const hourly = groupByHour(items, dateStr);
-    if (!hourly.length) continue;
-    const temps = hourly.map((h) => h.temp).filter((v) => v != null);
-    const pops = hourly.map((h) => h.pop).filter((v) => v != null);
-    const winds = hourly.map((h) => h.wind).filter((v) => v != null);
-    const humids = hourly.map((h) => h.humidity).filter((v) => v != null);
-    const midHour = hourly[Math.floor(hourly.length / 2)];
-    days.push({
-      date: toIsoDate(dateStr),
-      dayOffset: offset,
-      tempMin: temps.length ? Math.min(...temps) : null,
-      tempMax: temps.length ? Math.max(...temps) : null,
-      pop: pops.length ? Math.max(...pops) : null,
-      wind: winds.length ? Math.max(...winds) : null,
-      humidity: humids.length ? Math.round(humids.reduce((a, b) => a + b, 0) / humids.length) : null,
-      sky: midHour?.pty && midHour.pty !== '없음' ? midHour.pty : (midHour?.sky || '-'),
-    });
-  }
-
-  try {
-    const tmFc = resolveMidTmFc(new Date());
-    const region = await resolveMidRegion(env, lat, lon);
-    const wantedDates = [];
-    for (let offset = 4; offset <= 6; offset++) wantedDates.push(addDaysToDateStr(todayStr, offset));
-
-    let landByDate = new Map();
-    let taByDate = new Map();
-    let candidate = tmFc;
-    for (let step = 0; step <= 3; step++) {
-      if (step > 0) candidate = previousMidTmFc(candidate);
-      if (dateDiffDays(candidate.slice(0, 8), wantedDates[0]) > 10) break;
-      const midData = await fetchMidByDate(env, region, candidate);
-      landByDate = new Map([...midData.landByDate, ...landByDate]);
-      taByDate = new Map([...midData.taByDate, ...taByDate]);
-      if (wantedDates.every((d) => landByDate.has(d))) break;
-    }
-
-    for (let offset = 4; offset <= 6; offset++) {
-      const wantedDateStr = wantedDates[offset - 4];
-      const landEntries = landByDate.get(wantedDateStr) || [];
-      if (!landEntries.length) continue;
-      const ta = taByDate.get(wantedDateStr);
-      const repSky = landEntries.find((e) => e.ampm === 'pm')?.sky ?? landEntries[0]?.sky ?? '-';
-      const pops = landEntries.map((e) => e.pop).filter((v) => v != null);
-      days.push({
-        date: toIsoDate(wantedDateStr),
-        dayOffset: offset,
-        tempMin: ta?.min ?? null,
-        tempMax: ta?.max ?? null,
-        pop: pops.length ? Math.max(...pops) : null,
-        wind: null, // 중기예보엔 바람 데이터 자체가 없음
-        humidity: null, // 중기예보엔 습도 데이터 자체가 없음
-        sky: repSky,
-      });
-    }
-  } catch {
-    // 중기예보 실패해도 단기예보(0~3일)까지는 살려서 돌려준다
-  }
-
-  return days.sort((a, b) => a.dayOffset - b.dayOffset);
+  const d = data.daily;
+  if (!d?.time?.length) throw new Error('Open-Meteo 응답에 daily 데이터가 없습니다.');
+  return d.time.map((dateStr, i) => ({
+    date: dateStr,
+    dayOffset: i,
+    tempMin: d.temperature_2m_min?.[i] ?? null,
+    tempMax: d.temperature_2m_max?.[i] ?? null,
+    pop: d.precipitation_probability_max?.[i] ?? null,
+    // Open-Meteo는 풍속을 km/h로 주는데, 국내 기상 표기 관례(KMA)에 맞춰 m/s로 환산해서 보여준다.
+    windMs: d.wind_speed_10m_max?.[i] != null ? Math.round((d.wind_speed_10m_max[i] / 3.6) * 10) / 10 : null,
+    humidityMin: d.relative_humidity_2m_min?.[i] ?? null,
+    humidityMax: d.relative_humidity_2m_max?.[i] ?? null,
+    sky: WMO_SKY_LABEL[d.weather_code?.[i]] || '-',
+  }));
 }
 
-// 경기·강원·충청 대표 지점(도청 소재지 좌표) - 홈 탭 "주간 골프 기상도"는 사용자 위치 권한 없이
-// 항상 이 3개 고정 지점 기준으로 보여준다.
+// 경기남부·경기북부·경춘·강원·충청 대표 지점 좌표 - 홈 탭 "주간 골프 기상도"는 사용자 위치 권한
+// 없이 항상 이 5개 고정 지점 기준으로 보여준다(프론트에서 사용자가 그중 원하는 권역만 골라본다).
 const GOLF_WEATHER_BOARD_REGIONS = [
-  { key: 'gyeonggi', label: '경기도', lat: 37.2636, lon: 127.0286 }, // 수원
-  { key: 'gangwon', label: '강원도', lat: 37.8813, lon: 127.7298 }, // 춘천
-  { key: 'chungcheong', label: '충청도', lat: 36.3504, lon: 127.3845 }, // 대전
+  { key: 'gyeonggi_south', label: '경기 남부', lat: 37.2636, lon: 127.0286 }, // 수원
+  { key: 'gyeonggi_north', label: '경기 북부', lat: 37.7381, lon: 127.0337 }, // 의정부
+  { key: 'gyeongchun', label: '경춘', lat: 37.8315, lon: 127.5095 }, // 가평
+  { key: 'gangwon', label: '강원', lat: 37.8813, lon: 127.7298 }, // 춘천
+  { key: 'chungcheong', label: '충청', lat: 36.3504, lon: 127.3845 }, // 대전
 ];
 
-const GOLF_WEATHER_BOARD_CACHE_KEY = 'weather:golfboard';
-const GOLF_WEATHER_BOARD_CACHE_MS = 20 * 60 * 1000; // 20분
+// v2: 권역 5개(경기남부/북부·경춘·강원·충청) + 바람·습도 필드 추가로 응답 모양이 바뀌어 캐시 키를
+// 올렸다(이전 v1 캐시는 자연 만료되도록 두고, wrangler kv delete의 Windows 크래시를 다시 겪지 않기 위함).
+const GOLF_WEATHER_BOARD_CACHE_KEY = 'weather:golfboard:v4';
+const GOLF_WEATHER_BOARD_CACHE_MS = 20 * 60 * 1000; // 20분 - Open-Meteo는 요청 한도가 없지만, 예보
+// 자체도 자주 안 바뀌고 매번 새로 부를 필요가 없어 방문할 때마다의 호출을 줄여둔다(예의상 + 응답속도).
 
-/** GET /api/weather/board - 홈 탭 "주간 골프 기상도". 3개 권역을 병렬로 조회하고, 한 지역이
- * 실패해도(중기예보 지역 해석 실패 등) 나머지는 그대로 보여준다.
- * 홈 탭을 열 때마다 3개 권역 × 최대 4단계 중기예보 재시도(land+ta 2콜씩)까지 부르면 하루 쿼터를
- * 금방 소진한다(data.go.kr 공공API는 일일 요청 한도가 있고, 실제로 이 기능 개발/테스트 중에
- * "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR"로 막힌 걸 확인했다) - 단기/중기예보 모두
- * 발표 주기가 하루 몇 번뿐이라 결과가 자주 바뀌지도 않으므로, 20분 캐시로 방문할 때마다의 실호출을
- * 줄인다. */
+/** GET /api/weather/board - 홈 탭 "주간 골프 기상도". 5개 권역을 순서대로 조회하고, 한 지역이
+ * 실패해도 나머지는 그대로 보여준다. 권역이 3개일 땐 Promise.all(동시 호출)로 문제없었지만, 5개로
+ * 늘리고 나서 Cloudflare Worker → Open-Meteo 사이에 동시 커넥션이 몰릴 때 HTTP 525(TLS 핸드셰이크
+ * 실패)가 실측돼(직접 반복 호출은 항상 성공 - Open-Meteo 쪽 문제가 아니라 동시 연결 수 문제) 순차
+ * 호출로 바꿨다. */
 export async function fetchGolfWeatherBoard(env) {
-  if (!env.KMA_API_KEY) {
-    throw new Error('KMA_API_KEY가 설정되지 않았습니다 (wrangler secret put KMA_API_KEY)');
-  }
   const cached = await env.GOLF_KV.get(GOLF_WEATHER_BOARD_CACHE_KEY, 'json');
   if (cached?.cachedAt && Date.now() - cached.cachedAt < GOLF_WEATHER_BOARD_CACHE_MS) {
     return { regions: cached.regions };
   }
 
-  const regions = await Promise.all(GOLF_WEATHER_BOARD_REGIONS.map(async (r) => {
+  const regions = [];
+  for (const r of GOLF_WEATHER_BOARD_REGIONS) {
     try {
-      const days = await fetchDailyWeatherDetailed(env, r.lat, r.lon);
-      return { key: r.key, label: r.label, days };
+      const days = await fetchOpenMeteoDaily(r.lat, r.lon);
+      regions.push({ key: r.key, label: r.label, days });
     } catch (e) {
-      return { key: r.key, label: r.label, days: [], error: e.message || String(e) };
+      regions.push({ key: r.key, label: r.label, days: [], error: e.message || String(e) });
     }
-  }));
+  }
   await env.GOLF_KV.put(GOLF_WEATHER_BOARD_CACHE_KEY, JSON.stringify({ regions, cachedAt: Date.now() }), { expirationTtl: 60 * 60 });
   return { regions };
 }
