@@ -12,8 +12,13 @@ async function saveScores(env, scores) {
   await env.GOLF_KV.put(SCORES_KEY, JSON.stringify(scores));
 }
 
-const ALLOWED_SOURCES = ['직접입력', '보이스캐디', '스마트스코어', '종이스코어카드'];
+// 보이스캐디/스마트스코어 등 외부 앱 연동은 하지 않기로 해서(직접 실시간 입력이 메인 시나리오) 뺐다 -
+// 종이 스코어카드를 나중에 옮겨 적는 경우만 구분해두면 충분하다.
+const ALLOWED_SOURCES = ['직접입력', '종이스코어카드'];
 const ALLOWED_ROUND_TYPES = ['필드', '스크린'];
+// in_progress: 라운드 중 홀별 실시간 입력 진행중(스코어 탭에 "진행중인 라운드"로 상단 노출).
+// done: 완료된 라운드(간단 입력은 항상 done, 홀별 입력은 18홀 다 돌거나 "라운드 종료"를 눌렀을 때 done).
+const ALLOWED_STATUS = ['in_progress', 'done'];
 
 /** 홀별 상세 입력(스코어 탭 "홀별 상세 입력" 모드) 한 홀 - par는 course-info에서 가져온 값을 그대로
  * 스냅샷해서 저장한다(나중에 그 골프장의 코스정보가 수정돼도 이미 기록한 라운드의 파는 안 바뀌게). */
@@ -48,6 +53,7 @@ function normalizeScore(input, existing = {}) {
     source: ALLOWED_SOURCES.includes(input.source) ? input.source : existing.source || '직접입력',
     // 골프존 등 스크린골프 기록은 필드 라운드와 별도로 집계 (기획서 3-2 "골프존 스크린골프 스코어 기록")
     roundType: ALLOWED_ROUND_TYPES.includes(input.roundType) ? input.roundType : existing.roundType || '필드',
+    status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
     updatedAt: now,
