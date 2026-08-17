@@ -1,9 +1,12 @@
-// 골프장별 코스(9홀 단위 루프 - 예: LAKE/CHALLENGE/CREEK, 또는 IN/OUT)와 홀별 파·핸디캡 정보.
-// 문체부 공식 DB(golfCourseDB.js)에는 골프장명·지역·규모만 있고 홀별 데이터가 없어서, 이건 사용자가
-// 직접 입력해서 채우는 별도 저장소다(스코어 탭 "홀별 상세 입력"에서 파 정보를 자동으로 채우는 데 씀).
+// 골프장별 코스(9홀 단위 루프 - 예: LAKE/CHALLENGE/CREEK, 또는 IN/OUT)와 홀별 파, 그리고 코스
+// 조합(2개 코스 묶음, 예: 레이크+챌린지)×티박스별 KGA식 코스레이팅/슬로프레이팅/코스길이.
+// 문체부 공식 DB(golfCourseDB.js)에는 골프장명·지역·규모만 있고 이런 상세 데이터가 없어서, 이건
+// 사용자가 골프장 홈페이지/코스레이팅확인서를 보고 직접 입력해서 채우는 별도 저장소다(스코어 탭
+// "홀별 상세 입력"에서 파 정보를 자동으로 채우고, 라운드 시작 시 코스레이팅을 보여주는 데 씀).
 // 개인 1인 사용 규모라 scores.js와 동일하게 전체 목록을 단일 JSON 배열로 KV에 저장한다.
 
 const COURSE_INFO_KEY = 'courseInfoDb';
+const TEE_BOXES = ['white', 'blue', 'red'];
 
 export async function listCourseInfo(env) {
   const raw = await env.GOLF_KV.get(COURSE_INFO_KEY, 'json');
@@ -32,13 +35,29 @@ function normalizeSubCourse(sc, idx) {
   };
 }
 
+/** 코스 조합(예: [레이크, 챌린지] - 2개면 18홀 조합, 1개면 그 자체가 이미 18홀인 단일 코스)
+ * × 티박스 하나의 KGA식 코스레이팅/슬로프레이팅/코스길이. courseNames는 순서와 무관하게 같은
+ * 조합으로 취급해야 해서 항상 정렬해서 저장한다(OUT/IN 어느 쪽으로 시작했는지와 무관하게 매칭). */
+function normalizeRating(r) {
+  const num = (v) => (v != null && v !== '' ? Number(v) : null);
+  return {
+    courseNames: Array.isArray(r?.courseNames) ? [...r.courseNames].filter((n) => n && n.trim()).sort() : [],
+    teeBox: TEE_BOXES.includes(r?.teeBox) ? r.teeBox : 'white',
+    courseRating: num(r?.courseRating),
+    slopeRating: num(r?.slopeRating),
+    courseLength: num(r?.courseLength),
+  };
+}
+
 function normalizeCourseInfo(input, existing = {}) {
   const now = new Date().toISOString();
   const subCoursesInput = Array.isArray(input.subCourses) ? input.subCourses : null;
+  const ratingsInput = Array.isArray(input.ratings) ? input.ratings : null;
   return {
     id: existing.id || crypto.randomUUID(),
     courseName: (input.courseName ?? existing.courseName ?? '').trim(),
     subCourses: subCoursesInput ? subCoursesInput.map(normalizeSubCourse) : existing.subCourses || [],
+    ratings: ratingsInput ? ratingsInput.map(normalizeRating).filter((r) => r.courseNames.length) : existing.ratings || [],
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };

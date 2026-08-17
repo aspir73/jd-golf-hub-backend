@@ -45,7 +45,13 @@ function normalizeScore(input, existing = {}) {
     fir: input.fir != null ? Number(input.fir) : existing.fir ?? null,
     gir: input.gir != null ? Number(input.gir) : existing.gir ?? null,
     putts: input.putts != null ? Number(input.putts) : existing.putts ?? null,
+    // 개인 평점(1~5, "골프장 평점")과 별개 - 아래 kga* 필드는 라운드 시작 시 코스정보에 등록해둔
+    // KGA식 코스레이팅/슬로프레이팅을 그대로 스냅샷한 값(핸디캡 지수 계산 등에 나중에 쓸 수 있게).
     courseRating: input.courseRating != null ? Number(input.courseRating) : existing.courseRating ?? null,
+    teeBox: input.teeBox ?? existing.teeBox ?? '',
+    kgaCourseRating: input.kgaCourseRating != null ? Number(input.kgaCourseRating) : existing.kgaCourseRating ?? null,
+    kgaSlopeRating: input.kgaSlopeRating != null ? Number(input.kgaSlopeRating) : existing.kgaSlopeRating ?? null,
+    kgaCourseLength: input.kgaCourseLength != null ? Number(input.kgaCourseLength) : existing.kgaCourseLength ?? null,
     status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
