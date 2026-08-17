@@ -30,6 +30,9 @@ function normalizeHoleScore(h) {
     // 스코어카드에 표시만 남기는 참고 기록(공식 스트로크로 안 침).
     penalty: h?.penalty != null && h.penalty !== '' ? Number(h.penalty) : 0,
     mulligan: !!h?.mulligan,
+    // 페어웨이 안착(FIR) - 파3는 애초에 페어웨이 티샷 개념이 없어서 프론트에서 항상 null로 보낸다.
+    fairwayHit: h?.par === 3 ? null : !!h?.fairwayHit,
+    greenHit: !!h?.greenHit, // 그린 적중(GIR) - 모든 홀에 적용
     score: h?.score != null && h.score !== '' ? Number(h.score) : null,
   };
 }
@@ -59,6 +62,8 @@ function normalizeScore(input, existing = {}) {
     // 보내주므로 여기는 단위 구분 없이 미터로 저장한다.
     kgaCourseLength: input.kgaCourseLength != null ? Number(input.kgaCourseLength) : existing.kgaCourseLength ?? null,
     status: ALLOWED_STATUS.includes(input.status) ? input.status : existing.status || 'done',
+    // 동반자 이름 목록(자유 텍스트) - 통계 집계 없이 그냥 기록용.
+    companions: Array.isArray(input.companions) ? input.companions.filter((n) => n && n.trim()) : existing.companions ?? [],
     memo: input.memo ?? existing.memo ?? '',
     createdAt: existing.createdAt || now,
     updatedAt: now,
