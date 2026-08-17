@@ -244,10 +244,14 @@ export async function refreshWatch(env, watchId, opts = {}) {
 export async function refreshAllWatches(env) {
   const watches = await listWatches(env);
   const today = new Date().toISOString().slice(0, 10);
-  const targets = watches.filter((w) => w.active && w.date >= today).slice(0, 15);
+  // 감시 날짜가 지난 워치(부킹/조인 모두)는 더 이상 갱신할 이유가 없으니 크론이 도는 김에
+  // 같이 정리한다 - 예전엔 갱신 대상에서만 빠지고 목록엔 계속 남아있어서 부킹/조인 탭
+  // 모니터링 목록에 지난 날짜가 계속 쌓이는 문제가 있었다.
+  const kept = watches.filter((w) => w.date >= today);
+  const targets = kept.filter((w) => w.active).slice(0, 15);
   for (const watch of targets) {
     await applyWatchRefresh(env, watch, { maxGolfpangPages: 1 });
   }
-  await saveWatches(env, watches);
+  await saveWatches(env, kept);
   return targets.length;
 }
