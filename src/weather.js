@@ -558,3 +558,133 @@ export async function fetchWeekAheadWeather(env, lat, lon) {
 
   return { days: days.sort((a, b) => a.dayOffset - b.dayOffset) };
 }
+
+/** "주간 골프 기상도"용 - 기온뿐 아니라 강수확률(POP)·바람(WSD, 그날 최댓값)·습도(REH, 그날 평균)까지
+ * 포함한 일별 요약. 단기예보(0~3일)는 하루치 시간별 값에서 뽑아내고, 중기예보(4~6일)는 KMA 중기예보
+ * 자체에 바람·습도 필드가 아예 없어서 그 둘은 null로 둔다(프론트에서 "-"로 표시 - 진짜 데이터 공백이지
+ * 버그가 아니다). fetchWeekAheadWeather와 로직 뼈대는 같지만 그쪽은 기온만 요약해서 쓰는 용도(MY골프장
+ * 카드 등)라 건드리지 않고 이 함수를 따로 뒀다. */
+async function fetchDailyWeatherDetailed(env, lat, lon) {
+  const { nx, ny } = latLonToGrid(lat, lon);
+  const { base_date, base_time } = resolveBaseDateTime();
+  const todayStr = kstTodayString();
+
+  const url = new URL(KMA_ENDPOINT);
+  url.searchParams.set('serviceKey', env.KMA_API_KEY);
+  url.searchParams.set('numOfRows', '1000');
+  url.searchParams.set('pageNo', '1');
+  url.searchParams.set('dataType', 'JSON');
+  url.searchParams.set('base_date', base_date);
+  url.searchParams.set('base_time', base_time);
+  url.searchParams.set('nx', String(nx));
+  url.searchParams.set('ny', String(ny));
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`기상청 API 호출 실패: HTTP ${res.status}`);
+  const data = await res.json();
+  const header = data?.response?.header;
+  if (!header || header.resultCode !== '00') throw new Error(`기상청 API 오류: ${header?.resultMsg || '알 수 없는 오류'}`);
+  const items = data.response.body?.items?.item || [];
+
+  const days = [];
+  for (let offset = 0; offset <= 3; offset++) {
+    const dateStr = addDaysToDateStr(todayStr, offset);
+    const hourly = groupByHour(items, dateStr);
+    if (!hourly.length) continue;
+    const temps = hourly.map((h) => h.temp).filter((v) => v != null);
+    const pops = hourly.map((h) => h.pop).filter((v) => v != null);
+    const winds = hourly.map((h) => h.wind).filter((v) => v != null);
+    const humids = hourly.map((h) => h.humidity).filter((v) => v != null);
+    const midHour = hourly[Math.floor(hourly.length / 2)];
+    days.push({
+      date: toIsoDate(dateStr),
+      dayOffset: offset,
+      tempMin: temps.length ? Math.min(...temps) : null,
+      tempMax: temps.length ? Math.max(...temps) : null,
+      pop: pops.length ? Math.max(...pops) : null,
+      wind: winds.length ? Math.max(...winds) : null,
+      humidity: humids.length ? Math.round(humids.reduce((a, b) => a + b, 0) / humids.length) : null,
+      sky: midHour?.pty && midHour.pty !== '없음' ? midHour.pty : (midHour?.sky || '-'),
+    });
+  }
+
+  try {
+    const tmFc = resolveMidTmFc(new Date());
+    const region = await resolveMidRegion(env, lat, lon);
+    const wantedDates = [];
+    for (let offset = 4; offset <= 6; offset++) wantedDates.push(addDaysToDateStr(todayStr, offset));
+
+    let landByDate = new Map();
+    let taByDate = new Map();
+    let candidate = tmFc;
+    for (let step = 0; step <= 3; step++) {
+      if (step > 0) candidate = previousMidTmFc(candidate);
+      if (dateDiffDays(candidate.slice(0, 8), wantedDates[0]) > 10) break;
+      const midData = await fetchMidByDate(env, region, candidate);
+      landByDate = new Map([...midData.landByDate, ...landByDate]);
+      taByDate = new Map([...midData.taByDate, ...taByDate]);
+      if (wantedDates.every((d) => landByDate.has(d))) break;
+    }
+
+    for (let offset = 4; offset <= 6; offset++) {
+      const wantedDateStr = wantedDates[offset - 4];
+      const landEntries = landByDate.get(wantedDateStr) || [];
+      if (!landEntries.length) continue;
+      const ta = taByDate.get(wantedDateStr);
+      const repSky = landEntries.find((e) => e.ampm === 'pm')?.sky ?? landEntries[0]?.sky ?? '-';
+      const pops = landEntries.map((e) => e.pop).filter((v) => v != null);
+      days.push({
+        date: toIsoDate(wantedDateStr),
+        dayOffset: offset,
+        tempMin: ta?.min ?? null,
+        tempMax: ta?.max ?? null,
+        pop: pops.length ? Math.max(...pops) : null,
+        wind: null, // 중기예보엔 바람 데이터 자체가 없음
+        humidity: null, // 중기예보엔 습도 데이터 자체가 없음
+        sky: repSky,
+      });
+    }
+  } catch {
+    // 중기예보 실패해도 단기예보(0~3일)까지는 살려서 돌려준다
+  }
+
+  return days.sort((a, b) => a.dayOffset - b.dayOffset);
+}
+
+// 경기·강원·충청 대표 지점(도청 소재지 좌표) - 홈 탭 "주간 골프 기상도"는 사용자 위치 권한 없이
+// 항상 이 3개 고정 지점 기준으로 보여준다.
+const GOLF_WEATHER_BOARD_REGIONS = [
+  { key: 'gyeonggi', label: '경기도', lat: 37.2636, lon: 127.0286 }, // 수원
+  { key: 'gangwon', label: '강원도', lat: 37.8813, lon: 127.7298 }, // 춘천
+  { key: 'chungcheong', label: '충청도', lat: 36.3504, lon: 127.3845 }, // 대전
+];
+
+const GOLF_WEATHER_BOARD_CACHE_KEY = 'weather:golfboard';
+const GOLF_WEATHER_BOARD_CACHE_MS = 20 * 60 * 1000; // 20분
+
+/** GET /api/weather/board - 홈 탭 "주간 골프 기상도". 3개 권역을 병렬로 조회하고, 한 지역이
+ * 실패해도(중기예보 지역 해석 실패 등) 나머지는 그대로 보여준다.
+ * 홈 탭을 열 때마다 3개 권역 × 최대 4단계 중기예보 재시도(land+ta 2콜씩)까지 부르면 하루 쿼터를
+ * 금방 소진한다(data.go.kr 공공API는 일일 요청 한도가 있고, 실제로 이 기능 개발/테스트 중에
+ * "LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR"로 막힌 걸 확인했다) - 단기/중기예보 모두
+ * 발표 주기가 하루 몇 번뿐이라 결과가 자주 바뀌지도 않으므로, 20분 캐시로 방문할 때마다의 실호출을
+ * 줄인다. */
+export async function fetchGolfWeatherBoard(env) {
+  if (!env.KMA_API_KEY) {
+    throw new Error('KMA_API_KEY가 설정되지 않았습니다 (wrangler secret put KMA_API_KEY)');
+  }
+  const cached = await env.GOLF_KV.get(GOLF_WEATHER_BOARD_CACHE_KEY, 'json');
+  if (cached?.cachedAt && Date.now() - cached.cachedAt < GOLF_WEATHER_BOARD_CACHE_MS) {
+    return { regions: cached.regions };
+  }
+
+  const regions = await Promise.all(GOLF_WEATHER_BOARD_REGIONS.map(async (r) => {
+    try {
+      const days = await fetchDailyWeatherDetailed(env, r.lat, r.lon);
+      return { key: r.key, label: r.label, days };
+    } catch (e) {
+      return { key: r.key, label: r.label, days: [], error: e.message || String(e) };
+    }
+  }));
+  await env.GOLF_KV.put(GOLF_WEATHER_BOARD_CACHE_KEY, JSON.stringify({ regions, cachedAt: Date.now() }), { expirationTtl: 60 * 60 });
+  return { regions };
+}

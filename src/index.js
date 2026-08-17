@@ -1,4 +1,4 @@
-import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -77,6 +77,11 @@ export default {
           return error('lat, lon 쿼리 파라미터가 필요합니다');
         }
         return json(await fetchWeekAheadWeather(env, lat, lon));
+      }
+
+      // 홈 탭 "주간 골프 기상도" - 경기·강원·충청 3개 고정 권역, 위치 권한 불필요
+      if (pathname === '/api/weather/board' && method === 'GET') {
+        return json(await fetchGolfWeatherBoard(env));
       }
 
       // ===== 스코어 =====
