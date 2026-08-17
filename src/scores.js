@@ -26,6 +26,10 @@ function normalizeHoleScore(h) {
     par: h?.par != null && h.par !== '' ? Number(h.par) : null,
     shots: h?.shots != null && h.shots !== '' ? Number(h.shots) : null,
     putts: h?.putts != null && h.putts !== '' ? Number(h.putts) : null,
+    // 페널티 타수(OB·해저드 등) - 스코어에 그대로 더해진다. 멀리건은 스코어에 영향 없이
+    // 스코어카드에 표시만 남기는 참고 기록(공식 스트로크로 안 침).
+    penalty: h?.penalty != null && h.penalty !== '' ? Number(h.penalty) : 0,
+    mulligan: !!h?.mulligan,
     score: h?.score != null && h.score !== '' ? Number(h.score) : null,
   };
 }
