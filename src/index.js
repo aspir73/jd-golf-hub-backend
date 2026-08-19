@@ -1,4 +1,4 @@
-import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly, fetchOpenMeteoHourlyForRound } from './weather.js';
 import { listScores, addScore, updateScore, deleteScore } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -103,6 +103,17 @@ export default {
           return error('lat, lon 쿼리 파라미터가 필요합니다');
         }
         return json(await fetchOpenMeteoWeekly(lat, lon));
+      }
+
+      // 날씨 탭 - "라운드 일정"에 예약된 골프장의 라운딩 전날~당일 시간별 예보(Open-Meteo)
+      if (pathname === '/api/weather/course-hourly' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        const roundDate = url.searchParams.get('roundDate');
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || !roundDate) {
+          return error('lat, lon, roundDate 쿼리 파라미터가 필요합니다');
+        }
+        return json(await fetchOpenMeteoHourlyForRound(lat, lon, roundDate));
       }
 
       // ===== 스코어 =====

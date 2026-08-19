@@ -687,3 +687,57 @@ export async function fetchOpenMeteoForDate(lat, lon, dateStr) {
 export async function fetchOpenMeteoWeekly(lat, lon) {
   return { days: await fetchOpenMeteoDaily(lat, lon, 7) };
 }
+
+function isoDateAddDays(isoDateStr, days) {
+  const [y, m, d] = isoDateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+/** Open-Meteo 시간별 예보(start~end 날짜 범위, 시간당 1건) - "라운드 일정" 예약 골프장의 라운딩
+ * 전날~당일 상세 시간대 예보 전용. fetchOpenMeteoDaily와 같은 재시도 로직. */
+async function fetchOpenMeteoHourlyRange(lat, lon, startDate, endDate) {
+  const url = new URL(OPEN_METEO_ENDPOINT);
+  url.searchParams.set('latitude', String(lat));
+  url.searchParams.set('longitude', String(lon));
+  url.searchParams.set('hourly', 'temperature_2m,precipitation_probability,weather_code,wind_speed_10m,relative_humidity_2m');
+  url.searchParams.set('timezone', 'Asia/Seoul');
+  url.searchParams.set('start_date', startDate);
+  url.searchParams.set('end_date', endDate);
+
+  let res;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      res = await fetch(url.toString());
+      if (res.ok) break;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+    if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!res || !res.ok) {
+    const bodyText = res ? await res.text().catch(() => '') : '';
+    throw new Error(`Open-Meteo API 호출 실패: ${lastErr?.message || 'unknown'} body="${bodyText.slice(0, 200)}"`);
+  }
+  const data = await res.json();
+  const h = data.hourly;
+  if (!h?.time?.length) throw new Error('Open-Meteo 응답에 hourly 데이터가 없습니다.');
+  return h.time.map((time, i) => ({
+    time, // "2026-08-20T09:00" (KST, timezone=Asia/Seoul 지정했으므로 로컬시각 그대로)
+    temp: h.temperature_2m?.[i] ?? null,
+    pop: h.precipitation_probability?.[i] ?? null,
+    windMs: h.wind_speed_10m?.[i] != null ? Math.round((h.wind_speed_10m[i] / 3.6) * 10) / 10 : null,
+    humidity: h.relative_humidity_2m?.[i] ?? null,
+    sky: WMO_SKY_LABEL[h.weather_code?.[i]] || '-',
+  }));
+}
+
+/** GET /api/weather/course-hourly 전용 - "라운드 일정"에 예약된 골프장의 라운딩 전날 00시부터
+ * 당일 23시까지(정확한 "티타임+6시간" 절단은 프론트에서 함 - 몇 시간을 자를지는 순수 표시
+ * 로직이라 백엔드까지 왕복할 필요 없음) 시간별 예보를 통째로 반환한다. */
+export async function fetchOpenMeteoHourlyForRound(lat, lon, roundDate) {
+  const startDate = isoDateAddDays(roundDate, -1);
+  return { hours: await fetchOpenMeteoHourlyRange(lat, lon, startDate, roundDate) };
+}
