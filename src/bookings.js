@@ -21,6 +21,13 @@ async function saveBookings(env, bookings) {
   await env.GOLF_KV.put(BOOKINGS_KEY, JSON.stringify(bookings));
 }
 
+// 동반자는 예약 시점엔 이름만 있고(스코어는 라운드가 끝나야 생김 - scores.js의 companions와
+// 달리 score 필드가 없다), "▶ 라운드 시작" 시 이 이름들을 그대로 스코어 기록의 동반자로 넘긴다.
+function normalizeBookingCompanion(c) {
+  const name = (c?.name || '').trim();
+  return name ? { name } : null;
+}
+
 function normalizeBooking(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -47,7 +54,7 @@ function normalizeBooking(input, existing = {}) {
     companionCount: input.companionCount != null ? Number(input.companionCount) : existing.companionCount ?? null,
     paymentMethod: input.paymentMethod ?? existing.paymentMethod ?? '',
     reservationName: input.reservationName ?? existing.reservationName ?? '',
-    companions: Array.isArray(input.companions) ? input.companions : existing.companions ?? [],
+    companions: Array.isArray(input.companions) ? input.companions.map(normalizeBookingCompanion).filter(Boolean) : existing.companions ?? [],
     contactPhone: input.contactPhone ?? existing.contactPhone ?? '',
     homepageUrl: input.homepageUrl ?? existing.homepageUrl ?? '',
     memo: input.memo ?? existing.memo ?? '',
