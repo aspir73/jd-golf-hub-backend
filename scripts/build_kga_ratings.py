@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-data/KGA_코스레이팅_매칭데이터.xlsx의 '상세데이터' 시트를 파싱해서
-Worker가 그대로 import하는 정적 JSON(src/data/kgaCourseRatings.json)을 만든다.
-xlsx가 갱신되면(예: KGA가 새 코스레이팅을 발행하고 다시 매칭한 새 버전을 받으면)
+data/kga_course_ratings.csv(전국 골프장 DB의 KGA 코스레이팅 표 - 예전 KGA_코스레이팅_매칭데이터.xlsx
+'상세데이터' 시트를 정리한 것)를 파싱해서 Worker가 그대로 import하는 정적 JSON(src/data/kgaCourseRatings.json)을
+만든다. CSV가 갱신되면(예: KGA가 새 코스레이팅을 발행하고 다시 매칭한 새 버전을 받으면)
 이 스크립트를 다시 돌려서 JSON을 재생성하면 된다. 저장소 루트에서 실행:
     python scripts/build_kga_ratings.py
 
@@ -23,16 +23,17 @@ xlsx가 갱신되면(예: KGA가 새 코스레이팅을 발행하고 다시 매�
     코스조합 목록을 그대로 하나의 선택지로 보여주는 폴백 UI를 쓰게 한다(데이터를 억지로
     잘못 쪼개느니 원본 표기를 그대로 보여주는 게 안전하다).
 
-필요 패키지: openpyxl (pip install openpyxl)
+표준 라이브러리만 사용.
 """
+import csv
 import json
 import os
 import re
 from collections import defaultdict
-import openpyxl
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "data", "KGA_코스레이팅_매칭데이터.xlsx")
+SRC = os.path.join(ROOT, "data", "kga_course_ratings.csv")
+DST_OVERRIDE = os.environ.get("KGA_JSON_OUT")  # 검증용: 다른 경로로 출력해서 기존 JSON과 비교할 때
 DST = os.path.join(ROOT, "src", "data", "kgaCourseRatings.json")
 
 
@@ -68,9 +69,16 @@ def parse_loop_names(suffix):
 
 
 def main():
-    wb = openpyxl.load_workbook(SRC, data_only=True)
-    ws = wb["상세데이터"]
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    def num(v, cast):
+        v = (v or "").strip()
+        return cast(float(v)) if v else None
+
+    with open(SRC, encoding="utf-8-sig", newline="") as f:
+        rows = [
+            (r["province"], r["city"], r["kga_club_name"], r["kga_course_combo"], r["tee_set"], r["gender"],
+             num(r["course_rating"], float), num(r["slope_rating"], int), num(r["length_yd"], int))
+            for r in csv.DictReader(f)
+        ]
 
     # 골프장명 -> {region, combos: {comboLabel: [teeSet rows]}} (콤보 등장 순서 보존을 위해 dict+list 병용)
     courses = {}
@@ -124,7 +132,7 @@ def main():
             "combos": combos_out,
         })
 
-    with open(DST, "w", encoding="utf-8") as f:
+    with open(DST_OVERRIDE or DST, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
     total_combos = sum(len(c["combos"]) for c in result)

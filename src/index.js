@@ -1,14 +1,15 @@
 import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly, fetchOpenMeteoHourlyForRound } from './weather.js';
-import { listScores, addScore, updateScore, deleteScore } from './scores.js';
+import { listScores, addScore, updateScore, deleteScore, bulkAddScores } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
-import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses, bulkAddCourses } from './courses.js';
+import { listCourses, addCourse, updateCourse, deleteCourse, reorderCourses, bulkAddCourses, setCourseRecommend } from './courses.js';
 import { resolveWeekGreenFees } from './courseGreenFees.js';
 import { searchRestaurants, listFavoriteRestaurants, addFavoriteRestaurant, deleteFavoriteRestaurant } from './restaurants.js';
-import { searchPlaces, kakaoMapDirectionsUrl, fetchDrivingRoute, searchHomepageCandidates } from './kakao.js';
+import { searchPlaces, kakaoMapDirectionsUrl, searchHomepageCandidates, searchNearbyGolfCourses, findGolfPlace, cachedDrivingRoute } from './kakao.js';
 import { searchGolfpangRoundsAllPages } from './golfpang.js';
 import { searchGolfmonRounds } from './golfmon.js';
-import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
+import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes, checkNasRelay } from './kakaogolf.js';
+import { searchXgolfRounds } from './xgolf.js';
 import { listGroups, addGroup, addCandidate, removeCandidate, deleteGroup, getGroup } from './comparisonGroups.js';
 import { computeCandidateComponents } from './scoring.js';
 import { listBookings, addBooking, updateBooking, deleteBooking, findMatchingBooking, confirmMatchedBooking } from './bookings.js';
@@ -16,8 +17,14 @@ import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
 import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
-import { listCourseInfo, getCourseInfoByName, addCourseInfo, updateCourseInfo, deleteCourseInfo } from './courseInfo.js';
+import { listCourseInfo, getCourseInfoByName, addCourseInfo, updateCourseInfo, deleteCourseInfo, bulkAddCourseInfo } from './courseInfo.js';
 import { findKgaRating } from './kgaCourseRating.js';
+import { listCourseHoleDbIndex } from './courseHoleDb.js';
+import { fetchWeekendBoard } from './weekendBoard.js';
+import { saveBaseccSnapshot, getBaseccRounds } from './teeSnapshots.js';
+import { getGolfGeo, buildGolfGeoChunk } from './golfGeo.js';
+import { buildRoundAnalysis, buildSeasonReport } from './roundReport.js';
+import { syncRoundToDb, backfillRoundsToDb } from './roundDb.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -120,6 +127,11 @@ export default {
       if (pathname === '/api/scores' && method === 'GET') {
         return json({ scores: await listScores(env) });
       }
+      if (pathname === '/api/scores/bulk' && method === 'POST') {
+        const { items } = await request.json();
+        if (!Array.isArray(items)) return error('items(배열)가 필요합니다');
+        return json(await bulkAddScores(env, items));
+      }
       if (pathname === '/api/scores' && method === 'POST') {
         const record = await addScore(env, await request.json());
         return json({ score: record }, 201);
@@ -141,6 +153,15 @@ export default {
         const courseName = url.searchParams.get('courseName');
         if (courseName) return json({ courseInfo: await getCourseInfoByName(env, courseName) });
         return json({ courseInfoList: await listCourseInfo(env) });
+      }
+      // 전국 코스DB(D1 gc_*)에 코스·홀 데이터가 있는 골프장 이름 목록 - 골프장 목록의 "코스 입력 ›" 표시 판단용
+      if (pathname === '/api/course-info/db-index' && method === 'GET') {
+        return json({ clubs: await listCourseHoleDbIndex(env) });
+      }
+      if (pathname === '/api/course-info/bulk' && method === 'POST') {
+        const { items } = await request.json();
+        if (!Array.isArray(items)) return error('items(배열)가 필요합니다');
+        return json(await bulkAddCourseInfo(env, items));
       }
       if (pathname === '/api/course-info' && method === 'POST') {
         const record = await addCourseInfo(env, await request.json());
@@ -178,6 +199,84 @@ export default {
         return json(await updateSettings(env, await request.json()));
       }
 
+      // ===== 라운드 리포트(D1 rounds/holes 기반) =====
+      // 기존 KV 스코어 기록을 D1로 채운다(여러 번 호출해도 같은 결과).
+      if (pathname === '/api/reports/backfill' && method === 'POST') {
+        return json(await backfillRoundsToDb(env, await listScores(env)));
+      }
+      // 시즌 집계: 라운드 수/평균·베스트/퍼팅/GIR·FIR/분포/트러블/코스별/최근 추세
+      if (pathname === '/api/reports/season' && method === 'GET') {
+        return json(await buildSeasonReport(env, url.searchParams.get('year')));
+      }
+      // 한 라운드 분석(시즌 비교 포함) - 홈 요약 카드/결과 팝업이 사용
+      const roundReportMatch = pathname.match(/^\/api\/reports\/round\/([^/]+)$/);
+      if (roundReportMatch && method === 'GET') {
+        const id = roundReportMatch[1];
+        let round = await env.PRICE_DB.prepare('SELECT id, play_date, year, course_name, status FROM rounds WHERE id = ?').bind(id).first();
+        if (!round) {
+          // D1에 아직 없으면(반영 실패 등) KV 원본으로 한 번 채우고 다시 읽는다.
+          const record = (await listScores(env)).find((s) => s.id === id);
+          if (!record) return error('라운드를 찾을 수 없습니다', 404);
+          await syncRoundToDb(env, record);
+          round = await env.PRICE_DB.prepare('SELECT id, play_date, year, course_name, status FROM rounds WHERE id = ?').bind(id).first();
+        }
+        const analysis = await buildRoundAnalysis(env, round);
+        return json({ round: { id: round.id, date: round.play_date, courseName: round.course_name, status: round.status }, analysis });
+      }
+
+      // 대영베이스CC 티타임 스냅샷 - 홈페이지 방화벽이 Worker IP를 막아서 NAS(basecc_collector.py)가 읽어 올린다.
+      if (pathname === '/api/tee-snapshots/basecc' && method === 'POST') {
+        const secret = request.headers.get('X-Ingest-Secret');
+        if (!env.PRICE_INGEST_SECRET || secret !== env.PRICE_INGEST_SECRET) return error('인증 실패', 401);
+        return json(await saveBaseccSnapshot(env, await request.json()));
+      }
+      if (pathname === '/api/basecc/search' && method === 'GET') {
+        const date = url.searchParams.get('date');
+        if (!date) return error('date 쿼리 파라미터가 필요합니다');
+        const result = await getBaseccRounds(env, date);
+        const ampm = url.searchParams.get('ampm');
+        const caddy = url.searchParams.get('caddy');
+        let rounds = result.rounds;
+        if (ampm === 'am') rounds = rounds.filter((r) => Number(r.time.split(':')[0]) < 12);
+        if (caddy) rounds = rounds.filter((r) => r.caddyType === caddy);
+        return json({ open: result.open, fetchedAt: result.fetchedAt, stale: result.stale, rounds });
+      }
+
+      // 예약 탭 "이번 주말 현황" - 지정 골프장들의 다가오는 토·일 오전 티타임/그린피/날씨
+      if (pathname === '/api/weekend-board' && method === 'GET') {
+        return json(await fetchWeekendBoard(env, { refresh: url.searchParams.get('refresh') === '1', mode: url.searchParams.get('mode') === 'join' ? 'join' : 'booking' }));
+      }
+
+      // 골프장명 → 좌표 + 집에서의 거리/시간 (홈 "라운드 일정" 카드의 날씨·거리 표시용)
+      if (pathname === '/api/places/golf-travel' && method === 'GET') {
+        const courseName = url.searchParams.get('courseName');
+        if (!courseName) return error('courseName 쿼리 파라미터가 필요합니다');
+        // 골프장 위치(이름→좌표)는 거의 안 바뀌어서 30일 캐시하고, 거리/시간은 좌표 기준 캐시(cachedDrivingRoute)를 쓴다 -
+        // 이름이 달라도 같은 장소(태광CC 회원제/대중제 등)면 같은 값이 나오게. 골프장 목록이 화면에 보이는 줄마다 이 조회를 부른다.
+        const settings = await getSettings(env);
+        let h = 5381;
+        for (const ch of courseName) h = ((h << 5) + h + ch.charCodeAt(0)) >>> 0;
+        const placeKey = `golfplace:v1:${h.toString(36)}`;
+        let place = await env.GOLF_KV.get(placeKey, 'json');
+        if (!place) {
+          const found = await findGolfPlace(env, courseName);
+          if (!found) return json({ place: null });
+          place = { name: found.name, lat: found.lat, lon: found.lon };
+          await env.GOLF_KV.put(placeKey, JSON.stringify(place), { expirationTtl: 30 * 24 * 3600 });
+        }
+        const route = await cachedDrivingRoute(env, settings.homeLat, settings.homeLon, place.lat, place.lon).catch(() => null);
+        const payload = { place, distanceKm: route?.distanceKm ?? null, durationMin: route?.durationMin ?? null };
+        return json(payload);
+      }
+
+      // 현재 위치(또는 집) 기준 가까운 골프장 - 스코어카드 시작 화면
+      if (pathname === '/api/places/nearby-golf' && method === 'GET') {
+        const lat = Number(url.searchParams.get('lat'));
+        const lon = Number(url.searchParams.get('lon'));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return error('lat, lon 쿼리 파라미터가 필요합니다');
+        return json({ courses: await searchNearbyGolfCourses(env, { lat, lon }) });
+      }
+
       // ===== 장소 검색 (골프장 등록용 카카오 자동완성) =====
       if (pathname === '/api/places/search' && method === 'GET') {
         const query = url.searchParams.get('query');
@@ -190,7 +289,7 @@ export default {
           await Promise.all(
             places.map(async (p) => {
               if (p.lat == null || p.lon == null) return;
-              const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, p.lat, p.lon);
+              const route = await cachedDrivingRoute(env, settings.homeLat, settings.homeLon, p.lat, p.lon);
               if (route) {
                 p.driveDistanceKm = route.distanceKm;
                 p.driveDurationMin = route.durationMin;
@@ -238,6 +337,27 @@ export default {
         const results = await bulkAddCourses(env, names);
         return json(results);
       }
+      // 전국 골프장 좌표(집에서 가까운 순 정렬용) - 조회, 그리고 아직 없는 곳을 몇 곳씩 채우기
+      if (pathname === '/api/golf-geo' && method === 'GET') {
+        return json(await getGolfGeo(env));
+      }
+      if (pathname === '/api/golf-geo/build' && method === 'POST') {
+        return json(await buildGolfGeoChunk(env));
+      }
+
+      // 주말 추천(예약 탭)/주말 조인(조인 탭) 대상 지정 - 종류별 최대 6개
+      const recMatch = pathname.match(/^\/api\/courses\/([^/]+)\/recommend$/);
+      if (recMatch && method === 'POST') {
+        const { kind, on } = await request.json();
+        try {
+          const record = await setCourseRecommend(env, recMatch[1], kind, on);
+          if (!record) return error('해당 골프장을 찾을 수 없습니다', 404);
+          return json({ course: record });
+        } catch (e) {
+          return error(e.message, 400);
+        }
+      }
+
       const courseMatch = pathname.match(/^\/api\/courses\/([^/]+)$/);
       if (courseMatch && method === 'PUT') {
         const record = await updateCourse(env, courseMatch[1], await request.json());
@@ -328,6 +448,10 @@ export default {
       }
 
       // ===== 골프장 조건검색 (카카오골프예약 비로그인 조회 프록시) =====
+      // 카카오골프예약 연결 진단 - NAS 중계 상태(등록 시각/응답 여부)를 보여준다
+      if (pathname === '/api/kakaogolf/status' && method === 'GET') {
+        return json(await checkNasRelay(env));
+      }
       if (pathname === '/api/kakaogolf/search' && method === 'GET') {
         const date = url.searchParams.get('date');
         if (!date) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
@@ -356,6 +480,20 @@ export default {
             visitorCnt: visitorCnt2,
           }),
         });
+      }
+
+      // ===== 골프장 조건검색 (XGOLF 비로그인 조회 프록시 - 사용자 HAR 캡처로 재현, xgolf.js 참고) =====
+      if (pathname === '/api/xgolf/search' && method === 'GET') {
+        const date3 = url.searchParams.get('date');
+        if (!date3) return error('date 쿼리 파라미터가 필요합니다 (YYYY-MM-DD)');
+        const areaCode = url.searchParams.get('areaCode') || '';
+        const startHour = Number(url.searchParams.get('startHour') || 0);
+        const endHour = Number(url.searchParams.get('endHour') || 24);
+        const minFee = Number(url.searchParams.get('minFee') || 0);
+        const maxFee = Number(url.searchParams.get('maxFee') || 1000000);
+        const holes = Number(url.searchParams.get('holes') || 18);
+        const page = Number(url.searchParams.get('page') || 1);
+        return json(await searchXgolfRounds(env, { date: date3, areaCode, startHour, endHour, minFee, maxFee, holes, page }));
       }
 
       // ===== 동반예약(백업) 비교 그룹 =====
@@ -493,6 +631,25 @@ export default {
         }
         const result = await ingestPriceSnapshot(env, await request.json());
         return json(result);
+      }
+
+      // ===== NAS 실시간 중계 URL 등록 (kakaogolf.js 참고) =====
+      // NAS의 Cloudflare Quick Tunnel은 고정 도메인이 없어 cloudflared가 (재)시작될 때마다 URL이
+      // 바뀐다 - tunnel_supervisor.py가 새 URL을 잡을 때마다 여기로 등록해서 KV에 최신 값을
+      // 저장해두고, kakaogolf.js가 실시간 조회 때마다 이 값을 읽어 NAS로 중계한다. 대량 쓰기가
+      // 가능한 건 아니지만(KV 한 칸만 덮어씀) ingest와 같은 시크릿으로 보호한다 - NAS -> Worker
+      // 방향 호출은 전부 같은 신뢰 경계라 시크릿을 따로 늘리지 않는다.
+      if (pathname === '/api/nas-relay/register' && method === 'POST') {
+        const secret = request.headers.get('X-Ingest-Secret');
+        if (!env.PRICE_INGEST_SECRET || secret !== env.PRICE_INGEST_SECRET) {
+          return error('인증 실패', 401);
+        }
+        const { url: relayUrl } = await request.json();
+        if (!relayUrl || !/^https:\/\//.test(relayUrl)) {
+          return error('url(https://...)이 필요합니다');
+        }
+        await env.GOLF_KV.put('nasRelayUrl', JSON.stringify({ url: relayUrl, updatedAt: new Date().toISOString() }));
+        return json({ registered: true });
       }
       if (pathname === '/api/price-dashboard/courses' && method === 'GET') {
         const region = url.searchParams.get('region') || undefined;

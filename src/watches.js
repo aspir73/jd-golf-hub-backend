@@ -7,7 +7,10 @@
 import { findBestMatch, normalizeCourseName } from './golfCourseDB.js';
 import { searchGolfpangRoundsAllPages } from './golfpang.js';
 import { searchKakaoGolfRounds, fetchKakaoGolfTeeTimes } from './kakaogolf.js';
+import { searchXgolfRounds } from './xgolf.js';
+import { getBaseccRounds } from './teeSnapshots.js';
 import { DB_REGION_TO_NORMALIZED, NORMALIZED_REGION_CODES } from './regionMap.js';
+import { kstTodayDateStr } from './weather.js';
 
 const WATCHES_KEY = 'watches';
 
@@ -177,6 +180,20 @@ async function fetchWatchResults(env, watch, { maxGolfpangPages = 1 } = {}) {
     }
   }
 
+  // 대영베이스CC는 홈페이지 방화벽이 Worker를 막아서 NAS가 읽어 올려둔 스냅샷을 쓴다(booking 모드 전용).
+  // 워치의 캐디 옵션에 맞는 줄만 남긴다 - 일반=하우스캐디, 운전=드라이빙, 인턴=새싹.
+  if (watch.mode !== 'join' && normalizeCourseName(watch.courseName) === '대영베이스') {
+    const wantCaddy = { general: 'general', drive: 'driving', intern: 'sprout' }[watch.caddyType || 'general'];
+    try {
+      const { rounds } = await getBaseccRounds(env, watch.date);
+      rounds
+        .filter((r) => (!wantCaddy || r.caddyType === wantCaddy) && matchesTimeOfDay(r.time, watch.timeOfDay))
+        .forEach((r) => results.push({ source: '대영', time: r.time, holes: r.holes, greenFee: r.greenFee, courseSubName: r.courseSubName }));
+    } catch {
+      // 홈페이지 조회 실패 - 조용히 건너뜀(다른 플랫폼 결과라도 남기기 위해)
+    }
+  }
+
   // 조인 탭 워치는 조인 탭 조건검색과 동일하게 카카오골프예약을 아예 제외한다.
   if (watch.mode === 'join') return results.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
@@ -198,6 +215,23 @@ async function fetchWatchResults(env, watch, { maxGolfpangPages = 1 } = {}) {
     }
   } catch {
     // 카카오 조회 실패 - 조용히 건너뜀
+  }
+
+  // XGOLF도 카카오골프예약과 같은 이유로 booking 모드에만 적용한다(골팡의 "조인/백업" 같은
+  // 별도 조인 게시판 개념이 확인되지 않음 - 검색 결과 자체가 "지금 예약 가능한 자리" 목록이라
+  // 본인예약 성격에 가깝다). 사이트가 지역 코드를 2개로 나누지 않아서(한강이남/강북·경춘 구분
+  // 없음, 카카오와 동일한 한계) NORMALIZED_REGION_CODES의 xgolf 코드를 그대로 쓴다.
+  try {
+    const xgolfAreaCodes = normKeys.length ? [...new Set(normKeys.map((k) => NORMALIZED_REGION_CODES[k].xgolf))] : [''];
+    for (const areaCode of xgolfAreaCodes) {
+      const { rounds } = await searchXgolfRounds(env, { date: watch.date, areaCode });
+      rounds
+        .filter((r) => courseNameMatches(r, watch))
+        .filter((r) => matchesTimeOfDay(r.time, watch.timeOfDay))
+        .forEach((r) => results.push({ source: 'XGOLF', time: r.time, holes: r.holes, greenFee: r.greenFee }));
+    }
+  } catch {
+    // XGOLF 조회 실패 - 조용히 건너뜀
   }
 
   return results.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
@@ -243,7 +277,10 @@ export async function refreshWatch(env, watchId, opts = {}) {
  * 마지막에 한 번만 저장한다. */
 export async function refreshAllWatches(env) {
   const watches = await listWatches(env);
-  const today = new Date().toISOString().slice(0, 10);
+  // Worker는 UTC로 실행되는데 toISOString 기반으로 "오늘"을 구하면 한국(UTC+9) 기준
+  // 자정~오전 9시 사이엔 여전히 어제로 계산돼 지난 워치 정리가 최대 9시간 늦어졌다
+  // (index.html의 todayLocalStr 버그와 같은 원인 - 같이 발견해서 고침).
+  const today = kstTodayDateStr();
   // 감시 날짜가 지난 워치(부킹/조인 모두)는 더 이상 갱신할 이유가 없으니 크론이 도는 김에
   // 같이 정리한다 - 예전엔 갱신 대상에서만 빠지고 목록엔 계속 남아있어서 부킹/조인 탭
   // 모니터링 목록에 지난 날짜가 계속 쌓이는 문제가 있었다.

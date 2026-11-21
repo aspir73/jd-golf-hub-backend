@@ -155,6 +155,16 @@ function kstTodayString(nowUtc = new Date()) {
   return `${yyyy}${mm}${dd}`;
 }
 
+/** kstTodayString과 같은 계산이지만 "YYYY-MM-DD"(대시 포함) 형식 - watches.js/priceDashboard.js처럼
+ * roundDate/watch.date가 대시 포함 문자열인 곳에서 쓴다. Worker는 UTC로 실행되는데 `new
+ * Date().toISOString().slice(0,10)`을 그대로 쓰면 한국(UTC+9) 기준 자정~오전 9시 사이엔 "오늘"이
+ * 여전히 어제로 계산되는 버그가 있어서(프론트 index.html의 todayLocalStr와 같은 이유로 발견돼
+ * 같이 고침) - "오늘 날짜"가 필요하면 이 함수를 쓸 것, toISOString 기반 today는 쓰지 말 것. */
+export function kstTodayDateStr(nowUtc = new Date()) {
+  const s = kstTodayString(nowUtc);
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+}
+
 /** "2026-08-09"든 "20260809"든 받아서 8자리(YYYYMMDD)로 정규화. 형식이 이상하면 null */
 function normalizeDateStr(input) {
   if (!input) return null;
@@ -565,11 +575,11 @@ export async function fetchWeekAheadWeather(env, lat, lon) {
 // 키 없이 좌표만으로 온도·강우·바람·습도를 7일 전체 받을 수 있어 이 화면에는 훨씬 간단하고 안정적이다.
 // 앱의 다른 날씨 기능(날씨 탭, 부킹카드 배지, MY골프장 카드 등)은 이번엔 그대로 KMA를 쓴다 - 범위를
 // 좁혀서 우선 이 화면만 바꿈.
-const OPEN_METEO_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
+export const OPEN_METEO_ENDPOINT = 'https://api.open-meteo.com/v1/forecast';
 
 // WMO 날씨코드(Open-Meteo daily weather_code) -> 이 앱에서 이미 쓰는 하늘상태 라벨로 매핑
 // (GOLF_WEATHER_SKY_ICON, 프론트 index.html 참고 - 라벨 문자열을 맞춰야 아이콘이 나온다).
-const WMO_SKY_LABEL = {
+export const WMO_SKY_LABEL = {
   0: '맑음', 1: '맑음', 2: '구름많음', 3: '흐림',
   45: '흐림', 48: '흐림',
   51: '비', 53: '비', 55: '비', 56: '비/눈', 57: '비/눈',
@@ -583,7 +593,7 @@ const WMO_SKY_LABEL = {
 /** Open-Meteo 일별 예보(최대 16일) - 온도(최저/최고)·강수확률·바람(최대풍속)·습도(최저/최고)·
  * 대표 하늘상태. API 키 불필요(비상업적 용도), 명시적 요청 한도 없음. 바람/습도도 KMA 중기예보와
  * 달리 16일 내내 제공한다(실측 확인됨). */
-async function fetchOpenMeteoDaily(lat, lon, forecastDays = 7) {
+export async function fetchOpenMeteoDaily(lat, lon, forecastDays = 7) {
   const url = new URL(OPEN_METEO_ENDPOINT);
   url.searchParams.set('latitude', String(lat));
   url.searchParams.set('longitude', String(lon));

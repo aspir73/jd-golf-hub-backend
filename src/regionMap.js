@@ -13,13 +13,15 @@ export const DB_REGION_TO_NORMALIZED = {
   '제주': ['jeju'],
 };
 
-// 표준화 지역 그룹 -> 골팡 sector 코드 / 카카오골프예약 대권역 코드 (index.html의 NORMALIZED_REGIONS와 동일 값)
+// 표준화 지역 그룹 -> 골팡 sector 코드 / 카카오골프예약 대권역 코드 / XGOLF 지역코드 (index.html의
+// NORMALIZED_REGIONS와 동일 값). XGOLF도 카카오골프예약과 같은 이유로 경기/인천을 한강이남·
+// 강북/경춘으로 안 나누므로 hangang/gangbuk 둘 다 같은 코드(762)를 쓴다.
 export const NORMALIZED_REGION_CODES = {
-  hangang: { golfpang: '5', kakaoMajor: '1' },
-  gangbuk: { golfpang: '1', kakaoMajor: '1' },
-  gangwon: { golfpang: '8', kakaoMajor: '12' },
-  chungcheong: { golfpang: '4', kakaoMajor: '22' },
-  gyeongsang: { golfpang: '3', kakaoMajor: '31' },
-  jeolla: { golfpang: '6', kakaoMajor: '41' },
-  jeju: { golfpang: '7', kakaoMajor: '46' },
+  hangang: { golfpang: '5', kakaoMajor: '1', xgolf: '762' },
+  gangbuk: { golfpang: '1', kakaoMajor: '1', xgolf: '762' },
+  gangwon: { golfpang: '8', kakaoMajor: '12', xgolf: '764' },
+  chungcheong: { golfpang: '4', kakaoMajor: '22', xgolf: '765' },
+  gyeongsang: { golfpang: '3', kakaoMajor: '31', xgolf: '766' },
+  jeolla: { golfpang: '6', kakaoMajor: '41', xgolf: '767' },
+  jeju: { golfpang: '7', kakaoMajor: '46', xgolf: '768' },
 };

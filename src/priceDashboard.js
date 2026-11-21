@@ -6,6 +6,7 @@
 // refreshAllWatches가 이미 이 한도로 워치 15개까지만 처리하는 것과 같은 이유).
 
 import { findBestMatch } from './golfCourseDB.js';
+import { kstTodayDateStr } from './weather.js';
 
 // "오전(~12시)/오후(12~16시)/야간(16시~)" - 카카오골프예약 자체 timeZone 버킷(오전 2 + 새벽 1 /
 // 오후 4 / 야간 8)과 경계가 정확히 일치해서, 골팡의 개별 시간(HH:MM)도 같은 기준으로 묶으면 두
@@ -208,7 +209,9 @@ export async function getLeadTimeTrend(env, { courseName }) {
  * 매물인지 화면에서 보여줄 수 있게 한다(SQLite는 MIN() 하나만 쓰면 나머지 bare 컬럼이 그 최소값을
  * 낸 행의 값을 따라간다 - region_group/round_date 둘 다 여기 해당). */
 export async function getLowestToday(env, { region, roundDate, limit = 10 } = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+  // toISOString 기반이면 한국(UTC+9) 자정~오전 9시 사이엔 "오늘"이 어제로 계산돼 그 시간대엔
+  // 오늘 시작하는 라운드가 최저가 목록에서 빠지는 문제가 있었다(watches.js와 같은 원인).
+  const today = kstTodayDateStr();
   const conditions = ['green_fee IS NOT NULL', 'official_course_name IS NOT NULL'];
   const params = [];
   if (roundDate) {

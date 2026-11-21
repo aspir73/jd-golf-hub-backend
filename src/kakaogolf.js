@@ -15,6 +15,147 @@
 import { findBestMatch } from './golfCourseDB.js';
 
 const KAKAOGOLF_BASE = 'https://www.kakao.golf';
+// 카카오골프예약이 최근(2026-09) User-Agent 없는 요청을 403으로 막기 시작한 것으로 보여 추가함
+// (골팡은 golfpang.js에서 이미 User-Agent를 보내고 있고 계속 정상 동작 - 이쪽만 빠져있었다).
+// 실제 브라우저 UA와 최대한 가깝게 흉내내서 WAF의 봇 판정을 피한다.
+const KAKAOGOLF_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+
+// User-Agent를 추가한 뒤에도 완전히는 안 고쳐졌다 - 실제로 curl로 반복 호출해보니 완전히 동일한
+// 요청(같은 헤더·바디)이 절반 가까이는 200, 절반은 403이 무작위로 나왔다(같은 골프장이 방금 성공했다가
+// 바로 다음 요청에 실패하기도 함). 응답이 요청 내용과 무관하게 들쭉날쭉한 건 Cloudflare Workers의
+// fetch()가 매번 다른 송신 IP를 쓰는데, 그중 일부가 카카오골프예약 WAF(CloudFront)의 차단
+// 목록에 걸려있는 경우의 전형적인 패턴이다 - Worker 안에서는 어떤 IP로 나갈지 고를 방법이 없어서
+// 근본적으로 막을 수는 없고, 403이면 재시도하는 것으로 우회한다(관측된 성공률 약 50%가 진짜
+// 무작위라면 3번 재시도 시 실패 확률이 약 12%까지 떨어진다).
+async function fetchKakaoGolfWithRetry(url, options, attempts = 2) {
+  let lastRes;
+  for (let i = 0; i < attempts; i++) {
+    const res = await fetch(url, options);
+    if (res.ok) return res;
+    lastRes = res;
+    if (res.status !== 403) return res; // 403이 아니면 재시도로 해결될 문제가 아닐 가능성이 높음
+  }
+  return lastRes;
+}
+
+// ===== NAS 실시간 중계(근본 해결책) =====
+// 재시도로도 403을 완전히 없앨 수는 없어서(Worker는 발신 IP를 못 고름), price_collector.py가
+// 매일 새벽 카카오골프예약을 호출해도 12일+ 에러 0회였던 NAS(주거용 IP)를 실시간 조회에도
+// 쓴다 - nas-collector/live_relay.py가 그 NAS에서 상시 구동되며 카카오골프예약 요청을 대신
+// 보내준다. NAS <-> Worker는 Cloudflare Tunnel(Quick Tunnel - 고정 도메인이 없어 재시작마다
+// URL이 바뀜)로 연결되고, 현재 URL은 NAS가 재시작 때마다 KV에 등록해둔다(POST
+// /api/nas-relay/register, watches.js의 X-Ingest-Secret과 같은 패턴).
+// NAS가 꺼져있거나 터널이 끊겨 있으면 여기서 조용히 null을 돌려주고, 호출부가 지금까지의
+// 직접호출+재시도로 자동 대체한다(NAS 장애가 이 기능 전체를 막지 않도록).
+const NAS_RELAY_KV_KEY = 'nasRelayUrl';
+
+async function getNasRelayRecord(env) {
+  try {
+    return (await env.GOLF_KV.get(NAS_RELAY_KV_KEY, 'json')) || null;
+  } catch {
+    return null;
+  }
+}
+
+const daysAgo = (iso) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : null);
+
+/** NAS 중계 상태 진단(GET /api/kakaogolf/status 와 오류 메시지에서 공통 사용). */
+export async function checkNasRelay(env) {
+  if (!env.NAS_RELAY_SECRET) return { state: 'no_secret', message: 'NAS_RELAY_SECRET이 설정되지 않았어요' };
+  const record = await getNasRelayRecord(env);
+  if (!record?.url) return { state: 'not_registered', message: 'NAS 중계 주소가 아직 등록되지 않았어요' };
+  const age = daysAgo(record.updatedAt);
+  const started = Date.now();
+  try {
+    const res = await fetch(`${record.url}/healthz`, { signal: AbortSignal.timeout(6000) });
+    if (res.ok) return { state: 'ok', url: record.url, updatedAt: record.updatedAt, ageDays: age, ms: Date.now() - started };
+    return { state: 'unreachable', url: record.url, updatedAt: record.updatedAt, ageDays: age, message: `NAS 중계가 응답하지 않아요 (HTTP ${res.status}) - 마지막 등록 ${age}일 전` };
+  } catch {
+    return { state: 'unreachable', url: record.url, updatedAt: record.updatedAt, ageDays: age, message: `NAS 중계에 연결할 수 없어요 - 마지막 등록 ${age}일 전. NAS의 중계 스택(run_live_relay_stack.py)이 꺼져 있는지 확인해주세요` };
+  }
+}
+
+/** 성공하면 { ok:true, data }, 실패하면 { ok:false, reason } - reason은 사용자에게 보여줄 진단 문구. */
+async function callViaNasRelay(env, { path, body, referer }) {
+  if (!env.NAS_RELAY_SECRET) return { ok: false, reason: 'NAS 중계가 설정되지 않았어요' };
+  const record = await getNasRelayRecord(env);
+  if (!record?.url) return { ok: false, reason: 'NAS 중계 주소가 등록되지 않았어요' };
+  try {
+    const res = await fetch(`${record.url}/kakaogolf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Relay-Secret': env.NAS_RELAY_SECRET },
+      body: JSON.stringify({ path, body, referer }),
+      signal: AbortSignal.timeout(12000), // 터널이 죽어있으면 무한 대기하지 않고 곧장 직접호출로 넘어감
+    });
+    if (res.status === 403) return { ok: false, blocked: true, reason: 'NAS 접속도 일시 차단됨' };
+    if (!res.ok) return { ok: false, reason: `NAS 중계 응답 오류(HTTP ${res.status})` };
+    return { ok: true, data: await res.json() };
+  } catch {
+    return { ok: false, reason: `NAS 중계에 연결할 수 없어요(마지막 등록 ${daysAgo(record.updatedAt)}일 전)` };
+  }
+}
+
+/** 카카오골프예약 POST 요청 공용 진입점 - NAS 중계를 먼저 시도하고, 안 되면(NAS 꺼짐/터널
+ * 끊김/미설정) Worker에서 직접 호출+403 재시도로 대체한다. path는 "/api/tee-time/search" 등
+ * 카카오골프예약 쪽 경로, referer는 실제 브라우저가 그 요청을 보낼 때의 페이지 URL이다. */
+// 새로고침을 연달아 누르거나 워치·주말 현황이 같은 검색을 반복해도 카카오골프예약(NAS IP 차단 위험)에 같은 요청을
+// 다시 보내지 않도록, 검색/상세 응답은 3분간 KV에 잠깐 보관한다(티타임은 몇 분 단위로 바뀌는 정보라 충분히 짧다).
+const KAKAO_CACHE_PATHS = new Set(['/api/tee-time/search', '/api/tee-time/detail']);
+const KAKAO_CACHE_TTL_SEC = 180;
+const kakaoCacheKey = (path, body) => {
+  const str = path + JSON.stringify(body);
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
+  return `kakaogolf:resp:${h.toString(36)}`;
+};
+
+async function kakaoGolfRequest(env, args) {
+  const cacheable = KAKAO_CACHE_PATHS.has(args.path);
+  const key = cacheable ? kakaoCacheKey(args.path, args.body) : null;
+  if (cacheable) {
+    try {
+      const hit = await env.GOLF_KV.get(key, 'json');
+      if (hit) return hit;
+    } catch { /* 캐시를 못 읽어도 정상 조회 */ }
+  }
+  const data = await kakaoGolfRequestUncached(env, args);
+  if (cacheable) {
+    try { await env.GOLF_KV.put(key, JSON.stringify(data), { expirationTtl: KAKAO_CACHE_TTL_SEC }); } catch { /* 무시 */ }
+  }
+  return data;
+}
+
+async function kakaoGolfRequestUncached(env, { path, body, referer }) {
+  const relay = await callViaNasRelay(env, { path, body, referer });
+  if (relay.blocked) {
+    // NAS 중계는 살아있는데 카카오골프예약이 NAS 접속을 막은 경우(보통 짧은 시간에 요청이 몰렸을 때의 일시 차단).
+    // Worker 직접 호출은 어차피 막혀 있어서 재시도하지 않고 바로 안내한다.
+    throw new Error('카카오골프예약이 NAS 접속을 일시 차단했어요(짧은 시간에 요청이 많으면 생겨요). 몇 분 뒤 다시 시도해주세요 (HTTP 403)');
+  }
+  const data =
+    (relay.ok ? relay.data : null) ||
+    (await (async () => {
+      const res = await fetchKakaoGolfWithRetry(`${KAKAOGOLF_BASE}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: KAKAOGOLF_BASE,
+          Referer: referer,
+          'User-Agent': KAKAOGOLF_USER_AGENT,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        // 403이면 클라우드 서버 IP가 막힌 것 - 원인(NAS 중계 상태)을 같이 알려서 바로 조치할 수 있게 한다.
+        const hint = res.status === 403 ? ` (클라우드 서버 접속이 차단됨 · ${relay.reason})` : '';
+        throw new Error(`카카오골프예약 조회 실패: HTTP ${res.status}${hint}`);
+      }
+      return res.json();
+    })());
+  if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
+  return data;
+}
 
 // 대권역. 실제 /api/location/area 응답(POST, body {appVersion:"0"})으로 전수 확인.
 export const REGIONS = [
@@ -120,19 +261,12 @@ function golfInfoKey(golfInfoSeq) {
   return `kakaogolf:golfinfo:${golfInfoSeq}`;
 }
 
-async function fetchGolfInfo(golfInfoSeq) {
-  const res = await fetch(`${KAKAOGOLF_BASE}/api/golf/view`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Origin: KAKAOGOLF_BASE,
-      Referer: `${KAKAOGOLF_BASE}/golf/${golfInfoSeq}`,
-    },
-    body: JSON.stringify({ golfInfoSeq }),
+async function fetchGolfInfo(env, golfInfoSeq) {
+  const data = await kakaoGolfRequest(env, {
+    path: '/api/golf/view',
+    body: { golfInfoSeq },
+    referer: `${KAKAOGOLF_BASE}/golf/${golfInfoSeq}`,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.resultCode !== 200) throw new Error(data.resultMsg || '알 수 없는 오류');
   return {
     name: data.fullName || '',
     holeCount: data.holeCount || '',
@@ -140,26 +274,45 @@ async function fetchGolfInfo(golfInfoSeq) {
   };
 }
 
-/** 여러 golfInfoSeq를 병렬로 이름 해석. KV 캐시 우선, 없으면 조회 후 캐싱. 개별 실패는 무시(플레이스홀더 유지). */
+/** 여러 golfInfoSeq의 골프장 이름을 해석한다. KV 캐시를 먼저 보고, 없는 것만 /api/golf/view로 조회해서 캐싱한다.
+ * 검색 한 번에 수십 개를 한꺼번에 쏘면 카카오골프예약이 NAS 접속을 일시 차단(403)하는 게 확인돼서,
+ * 동시 3개로 제한하고 한 번에 새로 조회하는 개수도 상한을 둔다(남은 건 다음 검색 때 이어서 채워짐 -
+ * 이름은 영구 캐시라 몇 번 검색하면 전부 채워진다). 차단 신호가 오면 남은 조회는 바로 멈춘다.
+ * 개별 실패는 무시(플레이스홀더 유지). */
+const MAX_NEW_GOLFINFO_PER_SEARCH = 16;
+const GOLFINFO_CONCURRENCY = 3;
+
 async function resolveGolfInfoMap(env, golfInfoSeqs) {
   const uniqueSeqs = [...new Set(golfInfoSeqs)];
   const map = {};
+  const missing = [];
   await Promise.all(
     uniqueSeqs.map(async (seq) => {
       try {
         const cached = await env.GOLF_KV.get(golfInfoKey(seq), 'json');
-        if (cached) {
-          map[seq] = cached;
-          return;
-        }
-        const info = await fetchGolfInfo(seq);
-        map[seq] = info;
-        await env.GOLF_KV.put(golfInfoKey(seq), JSON.stringify(info));
+        if (cached) map[seq] = cached;
+        else missing.push(seq);
       } catch {
-        // 상세 조회 실패 시 "골프장 #번호" 플레이스홀더 유지(검색 결과 전체를 실패시키지 않음)
+        missing.push(seq);
       }
     })
   );
+
+  const queue = missing.slice(0, MAX_NEW_GOLFINFO_PER_SEARCH);
+  let stop = false;
+  async function worker() {
+    while (queue.length && !stop) {
+      const seq = queue.shift();
+      try {
+        const info = await fetchGolfInfo(env, seq);
+        map[seq] = info;
+        await env.GOLF_KV.put(golfInfoKey(seq), JSON.stringify(info));
+      } catch (e) {
+        if (/일시 차단|HTTP 403/.test(e.message || '')) stop = true; // 차단 중이면 더 두드리지 않는다
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: GOLFINFO_CONCURRENCY }, worker));
   return map;
 }
 
@@ -210,18 +363,11 @@ export async function fetchKakaoGolfTeeTimes(env, { golfInfoSeq, date, timeZone 
     },
   };
 
-  const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/detail`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Origin: KAKAOGOLF_BASE,
-      Referer: `${KAKAOGOLF_BASE}/tee-time?date=${compactDate}&area=1&timeZone=${timeZone}`,
-    },
-    body: JSON.stringify(body),
+  const data = await kakaoGolfRequest(env, {
+    path: '/api/tee-time/detail',
+    body,
+    referer: `${KAKAOGOLF_BASE}/tee-time?date=${compactDate}&area=1&timeZone=${timeZone}`,
   });
-  if (!res.ok) throw new Error(`카카오골프예약 티타임 조회 실패: HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
 
   return (data.list || []).map((item) => ({
     time: item.bookTime ? `${item.bookTime.slice(0, 2)}:${item.bookTime.slice(2)}` : '',
@@ -301,18 +447,11 @@ export async function searchKakaoGolfRounds(
   }
 
   async function runSearch(eventsForRequest) {
-    const res = await fetch(`${KAKAOGOLF_BASE}/api/tee-time/search`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: KAKAOGOLF_BASE,
-        Referer: `${KAKAOGOLF_BASE}/tee-time?area=${areas1s.join(',')}&date=${compactDate}`,
-      },
-      body: JSON.stringify(buildBody(eventsForRequest)),
+    const data = await kakaoGolfRequest(env, {
+      path: '/api/tee-time/search',
+      body: buildBody(eventsForRequest),
+      referer: `${KAKAOGOLF_BASE}/tee-time?area=${areas1s.join(',')}&date=${compactDate}`,
     });
-    if (!res.ok) throw new Error(`카카오골프예약 조회 실패: HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.resultCode !== 200) throw new Error(`카카오골프예약 응답 오류: ${data.resultMsg || '알 수 없는 오류'}`);
     // 필터에 안 맞는 골프장도 목록엔 그대로 남고 timeCnt(매칭건수)만 0으로 내려온다 — 걸러낸다.
     return (data.list || []).filter((item) => (item.timeCnt || 0) > 0);
   }

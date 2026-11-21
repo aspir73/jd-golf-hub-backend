@@ -5,6 +5,9 @@
 // "홀별 상세 입력"에서 파 정보를 자동으로 채우고, 라운드 시작 시 코스레이팅을 보여주는 데 씀).
 // 개인 1인 사용 규모라 scores.js와 동일하게 전체 목록을 단일 JSON 배열로 KV에 저장한다.
 
+import { normalizeCourseName } from './golfCourseDB.js';
+import { getCourseHoleDbByName, enrichWithHoleDb } from './courseHoleDb.js';
+
 const COURSE_INFO_KEY = 'courseInfoDb';
 const TEE_BOXES = ['white', 'blue', 'red'];
 
@@ -63,23 +66,60 @@ function normalizeCourseInfo(input, existing = {}) {
   };
 }
 
+/** 같은 골프장이 회원제/대중제로 나뉘어 있는 경우(예: 태광컨트리클럽(회원제) / (대중제))를 구분한다.
+ * normalizeCourseName은 괄호 안 구분을 지워서 둘이 같은 이름이 되므로, 둘 다 구분 표기가 있으면 같은 구분일 때만
+ * 같은 골프장으로 본다(한쪽만 표기가 있으면 구분 없이 같은 것으로 취급 - 예전 동작 유지). */
+const kindOf = (n) => (/회원제/.test(n) ? 'member' : /대중제/.test(n) ? 'public' : '');
+function sameCourseName(a, b) {
+  if (a === b) return true;
+  if (normalizeCourseName(a) !== normalizeCourseName(b)) return false;
+  const ka = kindOf(a);
+  const kb = kindOf(b);
+  return !ka || !kb || ka === kb;
+}
+
 export async function getCourseInfoByName(env, courseName) {
   const list = await listCourseInfo(env);
   const target = (courseName || '').trim();
   if (!target) return null;
-  return list.find((c) => c.courseName === target) || null;
+  // 정확히 같은 표기는 물론, "양평TPC" vs "양평TPC GC"처럼 골프장명 표기가 조금 다른 경우도
+  // 매칭되도록 다른 모듈들(kgaCourseRating, courses, watches 등)과 동일하게 normalizeCourseName을
+  // 쓴다 - 안 그러면 코스정보를 등록해둬도 부킹 다이얼로그에서 표기가 살짝만 달라도 못 찾는다.
+  const own = list.find((c) => c.courseName === target) || list.find((c) => sameCourseName(c.courseName, target)) || null;
+  // 직접 입력한 코스정보가 우선(파 포함 그대로), 전국 코스·홀 DB(D1)로 화이트 거리·핸디캡만 보충한다.
+  // 직접 입력한 게 없으면 DB 값을 그대로 돌려준다(source: 'db' - 수정/삭제 대상이 아님).
+  const dbInfo = await getCourseHoleDbByName(env, own?.courseName || target);
+  if (own) return dbInfo ? enrichWithHoleDb(own, dbInfo) : own;
+  return dbInfo;
 }
 
 export async function addCourseInfo(env, input) {
   if (!input.courseName || !input.courseName.trim()) throw new Error('courseName은 필수입니다');
   const list = await listCourseInfo(env);
-  if (list.some((c) => c.courseName === input.courseName.trim())) {
+  if (list.some((c) => sameCourseName(c.courseName, input.courseName.trim()))) {
     throw new Error('이미 등록된 골프장입니다. 수정으로 진행해주세요');
   }
   const record = normalizeCourseInfo(input);
   list.push(record);
   await saveCourseInfo(env, list);
   return record;
+}
+
+/** 여러 골프장 코스정보를 KV 읽기 1번/쓰기 1번으로 한꺼번에 등록한다. addCourseInfo를 연달아 호출하면 KV(최종 일관성)가
+ * 이전 쓰기를 못 보고 목록을 덮어써서 먼저 넣은 항목이 사라지는 문제가 실제로 있었다(courses.js bulkAddCourses와 같은 이유).
+ * 이미 있는 이름은 건너뛰고 결과를 돌려준다. */
+export async function bulkAddCourseInfo(env, items) {
+  const list = await listCourseInfo(env);
+  const result = { added: [], skipped: [], failed: [] };
+  for (const input of items) {
+    const name = (input?.courseName || '').trim();
+    if (!name) { result.failed.push({ courseName: '', error: 'courseName 없음' }); continue; }
+    if (list.some((c) => sameCourseName(c.courseName, name))) { result.skipped.push(name); continue; }
+    list.push(normalizeCourseInfo(input));
+    result.added.push(name);
+  }
+  if (result.added.length) await saveCourseInfo(env, list);
+  return result;
 }
 
 export async function updateCourseInfo(env, id, input) {

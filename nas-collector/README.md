@@ -94,3 +94,14 @@ python3 price_collector.py
   두 사이트 구조가 바뀌어 파싱이 깨지면 해당 파일들을 같이 고쳐야 합니다.
 - 조인(join) 매물은 수집하지 않습니다(부킹만). 필요해지면 `collect_golfpang_entries`에 모드를
   추가하는 정도로 확장할 수 있습니다.
+
+
+## 대영베이스CC 티타임 수집기 (basecc_collector.py)
+
+대영베이스 홈페이지 방화벽이 Cloudflare Worker IP를 차단해서(실측: "보안 위협이 탐지되어 접근이 차단"), Worker가 직접 읽지 못하고 이 스크립트가 NAS/집 PC에서 공개 예약 화면을 읽어 `/api/tee-snapshots/basecc`로 올린다. 앱의 "이번 주말 오전 티타임"과 모니터링(대영베이스 워치)이 이 스냅샷을 사용한다.
+
+- 테스트: `python -I basecc_collector.py --dry-run` (올리지 않고 결과만 출력)
+- 1회 수집: `python -I basecc_collector.py` (작업 스케줄러/cron에 15분 간격 등록)
+- 상시 실행: `python -I basecc_collector.py --loop` (`basecc_interval_minutes` 간격)
+- config.json: `ingest_secret`(price_collector와 같은 값) 필수. `basecc_lookahead_days`(기본 14), `basecc_interval_minutes`(기본 15), `basecc_delay_seconds`(기본 1.5)
+- 사이트 부담을 줄이려고 날짜 사이에 지연을 두고 조회 범위를 제한한다. 간격을 너무 짧게 줄이지 말 것.

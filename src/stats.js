@@ -6,7 +6,9 @@ function avg(nums) {
   return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
 }
 
-export function computeStats(scores) {
+export function computeStats(allScores) {
+  // 진행중/임시저장(in_progress) 라운드는 18홀을 다 입력해 종료하기 전까지 통계에 넣지 않는다(부분 합계가 평균을 왜곡함).
+  const scores = allScores.filter((s) => s.status !== 'in_progress');
   const sorted = [...scores].sort((a, b) => (a.date < b.date ? 1 : -1)); // 최신순
   const recent10 = sorted.slice(0, 10);
 

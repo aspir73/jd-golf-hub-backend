@@ -1,5 +1,5 @@
 // 골프장 마스터 DB(즐겨찾기) KV CRUD. 개인 규모라 단일 JSON 배열로 저장 (기획서 3-1 골프장 마스터 DB 구조 참고).
-import { coordToRegion, fetchDrivingRoute, searchKeyword } from './kakao.js';
+import { coordToRegion, cachedDrivingRoute, findGolfPlace } from './kakao.js';
 import { getSettings } from './settings.js';
 import { findBestMatch, normalizeCourseName } from './golfCourseDB.js';
 
@@ -38,7 +38,7 @@ async function backfillHomeTravelInfo(env, record) {
   try {
     const settings = await getSettings(env);
     if (settings.homeLat == null || settings.homeLon == null) return false;
-    const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
+    const route = await cachedDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
     if (!route) return false;
     record.homeDistanceKm = route.distanceKm;
     record.homeDurationMin = route.durationMin;
@@ -73,7 +73,7 @@ async function withHomeDistance(env, record) {
   if (record.lat == null || record.lon == null) return record;
   const settings = await getSettings(env);
   if (settings.homeLat == null || settings.homeLon == null) return record;
-  const route = await fetchDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
+  const route = await cachedDrivingRoute(env, settings.homeLat, settings.homeLon, record.lat, record.lon);
   return {
     ...record,
     homeDistanceKm: route?.distanceKm ?? record.homeDistanceKm ?? null,
@@ -102,6 +102,9 @@ function normalizeCourse(input, existing = {}) {
       coursePage: input.bookingLinks?.coursePage ?? existing.bookingLinks?.coursePage ?? '',
     },
     memo: input.memo ?? existing.memo ?? '',
+    // 예약 탭 "주말 추천 골프장" / 조인 탭 "주말 함께 라운딩" 대상 여부(각각 최대 MAX_RECOMMEND개 - setCourseRecommend 참고)
+    recBooking: existing.recBooking ?? false,
+    recJoin: existing.recJoin ?? false,
     homeDistanceKm: existing.homeDistanceKm ?? null,
     homeDurationMin: existing.homeDurationMin ?? null,
     createdAt: existing.createdAt || now,
@@ -133,8 +136,8 @@ async function resolveNewCourseRecord(env, input, courses) {
   // 최대한 자동으로 채운다. 실패해도 이름만으로는 등록을 계속 진행한다(부가정보라 필수는 아님).
   if (mergedInput.lat == null || mergedInput.lon == null) {
     try {
-      const places = await searchKeyword(env, resolvedName);
-      const best = places[0];
+      // 첫 검색 결과가 아니라 골프장 카테고리를 우선해서 고른다(예전엔 첫 결과를 써서 태광CC 좌표가 9km 떨어진 곳으로 저장됐었음).
+      const best = await findGolfPlace(env, resolvedName);
       if (best) {
         mergedInput.lat = mergedInput.lat ?? best.lat;
         mergedInput.lon = mergedInput.lon ?? best.lon;
@@ -185,6 +188,28 @@ export async function bulkAddCourses(env, names) {
   }
   await saveCourses(env, courses);
   return results;
+}
+
+export const MAX_RECOMMEND = 6;
+const REC_FIELDS = { booking: 'recBooking', join: 'recJoin' };
+
+/** 주말 추천(booking)/주말 조인(join) 대상 골프장 지정. 종류별 최대 6개 - 넘으면 예외를 던진다.
+ * 길찾기 재계산 같은 부가 작업 없이 플래그만 바꾼다. */
+export async function setCourseRecommend(env, id, kind, on) {
+  const field = REC_FIELDS[kind];
+  if (!field) throw new Error('kind는 booking 또는 join이어야 합니다');
+  const courses = await listCourses(env);
+  const idx = courses.findIndex((c) => c.id === id);
+  if (idx === -1) return null;
+  if (on && !courses[idx][field]) {
+    const count = courses.filter((c) => c[field]).length;
+    if (count >= MAX_RECOMMEND) {
+      throw new Error(`${kind === 'join' ? '조인' : '예약'} 추천 골프장은 최대 ${MAX_RECOMMEND}개까지 선택할 수 있어요`);
+    }
+  }
+  courses[idx] = { ...courses[idx], [field]: Boolean(on), updatedAt: new Date().toISOString() };
+  await saveCourses(env, courses);
+  return courses[idx];
 }
 
 export async function updateCourse(env, id, input) {
