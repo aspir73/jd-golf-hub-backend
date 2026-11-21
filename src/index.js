@@ -1,4 +1,5 @@
-import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly, fetchOpenMeteoHourlyForRound } from './weather.js';
+import { fetchWeather, fetchMidTermWeather, fetchWeekAheadWeather, fetchGolfWeatherBoard, fetchOpenMeteoForDate, fetchOpenMeteoWeekly, fetchOpenMeteoHourlyForRound, fetchOpenMeteoHourlyRange, kstTodayDateStr } from './weather.js';
+import { resolveCourseCoords } from './roundWeather.js';
 import { listScores, addScore, updateScore, deleteScore, bulkAddScores } from './scores.js';
 import { computeStats } from './stats.js';
 import { getSettings, updateSettings } from './settings.js';
@@ -17,7 +18,7 @@ import { parseBookingMessage } from './messageParsing.js';
 import { listGolfCourseDB, listRegions, searchGolfCourseDB } from './golfCourseDB.js';
 import { listWatches, addWatch, updateWatch, deleteWatch, refreshWatch, refreshAllWatches, bulkAddWatches, bulkDeleteWatches } from './watches.js';
 import { ingestPriceSnapshot, listTrackedCourses, getCourseHistory, getWeekdayTrend, getLeadTimeTrend, getLowestToday } from './priceDashboard.js';
-import { listCourseInfo, getCourseInfoByName, addCourseInfo, updateCourseInfo, deleteCourseInfo, bulkAddCourseInfo } from './courseInfo.js';
+import { listCourseInfo, getCourseInfoByName, getCourseView, addCourseInfo, updateCourseInfo, deleteCourseInfo, bulkAddCourseInfo } from './courseInfo.js';
 import { findKgaRating } from './kgaCourseRating.js';
 import { listCourseHoleDbIndex } from './courseHoleDb.js';
 import { fetchWeekendBoard } from './weekendBoard.js';
@@ -113,6 +114,16 @@ export default {
       }
 
       // 날씨 탭 - "라운드 일정"에 예약된 골프장의 라운딩 전날~당일 시간별 예보(Open-Meteo)
+      // 스코어 입력 화면 날씨 띠: 골프장 이름 → 좌표 → 오늘~내일 시간별 예보(지금·2시간 뒤·4시간 뒤는 프론트가 고른다)
+      if (pathname === '/api/weather/round-now' && method === 'GET') {
+        const courseName = url.searchParams.get('courseName');
+        if (!courseName) return error('courseName 쿼리 파라미터가 필요합니다');
+        const coords = await resolveCourseCoords(env, courseName);
+        if (!coords) return json({ hours: [], coords: null });
+        const today = kstTodayDateStr();
+        const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+        return json({ hours: await fetchOpenMeteoHourlyRange(coords.lat, coords.lon, today, tomorrow), coords });
+      }
       if (pathname === '/api/weather/course-hourly' && method === 'GET') {
         const lat = Number(url.searchParams.get('lat'));
         const lon = Number(url.searchParams.get('lon'));
@@ -153,6 +164,12 @@ export default {
         const courseName = url.searchParams.get('courseName');
         if (courseName) return json({ courseInfo: await getCourseInfoByName(env, courseName) });
         return json({ courseInfoList: await listCourseInfo(env) });
+      }
+      // 골프장 보기 화면: 직접 입력 코스정보(own) + 전국 코스DB(db: 소개·티별 거리)
+      if (pathname === '/api/course-info/view' && method === 'GET') {
+        const courseName = url.searchParams.get('courseName');
+        if (!courseName) return error('courseName 쿼리 파라미터가 필요합니다');
+        return json(await getCourseView(env, courseName));
       }
       // 전국 코스DB(D1 gc_*)에 코스·홀 데이터가 있는 골프장 이름 목록 - 골프장 목록의 "코스 입력 ›" 표시 판단용
       if (pathname === '/api/course-info/db-index' && method === 'GET') {

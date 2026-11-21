@@ -13,6 +13,7 @@
 최초 1회(테이블 생성):
   wrangler d1 execute PRICE_DB --remote --file=migrations/0004_golf_course_db.sql
   wrangler d1 execute PRICE_DB --remote --file=migrations/0005_gc_holes_std_tees.sql
+  wrangler d1 execute PRICE_DB --remote --file=migrations/0008_gc_club_details_notes.sql
 """
 import csv
 import json
@@ -34,6 +35,14 @@ TABLES = [
         ('mcst_registered_names', 'mcst_registered_names', 's'), ('region', 'region', 's'), ('city', 'city', 's'),
         ('address', 'address', 's'), ('operation_type', 'operation_type', 's'), ('total_holes', 'total_holes', 'i'),
         ('homepage_url', 'homepage_url', 's'), ('data_status', 'data_status', 's'),
+        # 골프장 보기 화면용 소개·운영 정보(migrations/0008)
+        ('phone', 'phone', 's'), ('total_par', 'total_par', 'i'), ('course_layout', 'course_layout', 's'),
+        ('total_length_text', 'total_length_text', 's'), ('caddie_cart', 'caddie_cart', 's'), ('features', 'features', 's'),
+        ('remarks', 'remarks', 's'), ('main_sources', 'main_sources', 's'), ('operator', 'operator', 's'),
+    ]),
+    ('gc_course_notes', 'course_notes.csv', ['club_id', 'course_name'], [
+        ('club_id', 'club_id', 's'), ('course_name', 'course_name', 's'), ('holes', 'holes', 'i'),
+        ('par', 'par', 'i'), ('length_text', 'length_text', 's'), ('description', 'description', 's'),
     ]),
     ('gc_courses', 'courses.csv', ['course_id'], [
         ('course_id', 'course_id', 's'), ('club_id', 'club_id', 's'), ('course_seq', 'course_seq', 'i'),

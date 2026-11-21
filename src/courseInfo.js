@@ -93,6 +93,16 @@ export async function getCourseInfoByName(env, courseName) {
   return dbInfo;
 }
 
+/** 골프장 보기 화면용: 직접 입력한 코스정보(DB로 보충) + 전국 코스DB 원본(소개·티별 거리 표)을 함께 돌려준다. */
+export async function getCourseView(env, courseName) {
+  const list = await listCourseInfo(env);
+  const target = (courseName || '').trim();
+  if (!target) return { own: null, db: null };
+  const own = list.find((c) => c.courseName === target) || list.find((c) => sameCourseName(c.courseName, target)) || null;
+  const db = await getCourseHoleDbByName(env, own?.courseName || target);
+  return { own: own ? (db ? enrichWithHoleDb(own, db) : own) : null, db };
+}
+
 export async function addCourseInfo(env, input) {
   if (!input.courseName || !input.courseName.trim()) throw new Error('courseName은 필수입니다');
   const list = await listCourseInfo(env);

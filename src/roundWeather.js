@@ -10,7 +10,7 @@ import { OPEN_METEO_ENDPOINT, WMO_SKY_LABEL } from './weather.js';
 
 const GEO_KEY = 'golfgeo:v1';
 
-async function resolveCourseCoords(env, courseName) {
+export async function resolveCourseCoords(env, courseName) {
   const key = normalizeCourseName(courseName);
   const mine = (await listCourses(env).catch(() => [])).find((c) => c.lat != null && c.lon != null && normalizeCourseName(c.name) === key);
   if (mine) return { lat: mine.lat, lon: mine.lon };

@@ -98,15 +98,21 @@ const isWhite = (t) => t.tee_group === '화이트' && t.ladies !== 'Y';
 
 /** club_id 하나의 코스·홀·티 데이터를 courseInfo 모양으로 조립한다. */
 export async function getCourseHoleDbByClubId(env, clubId) {
-  const [club, courses, holes, tees, courseTees] = await env.PRICE_DB.batch([
+  const [club, courses, holes, tees, courseTees, notes] = await env.PRICE_DB.batch([
     env.PRICE_DB.prepare('SELECT * FROM gc_clubs WHERE club_id = ?').bind(clubId),
     env.PRICE_DB.prepare('SELECT * FROM gc_courses WHERE club_id = ? ORDER BY course_seq').bind(clubId),
     env.PRICE_DB.prepare('SELECT * FROM gc_holes WHERE club_id = ? ORDER BY course_id, hole_no').bind(clubId),
     env.PRICE_DB.prepare('SELECT course_id, hole_no, tee_seq, tee_name, tee_group, ladies, length_m FROM gc_hole_tees WHERE club_id = ? ORDER BY tee_seq').bind(clubId),
     env.PRICE_DB.prepare('SELECT * FROM gc_course_tees WHERE club_id = ? ORDER BY tee_seq').bind(clubId),
+    env.PRICE_DB.prepare('SELECT * FROM gc_course_notes WHERE club_id = ?').bind(clubId),
   ]);
   const c = club.results[0];
   if (!c) return null;
+  // 코스별 설명은 표기가 조금씩 달라서("OUT (1~9번)" vs "OUT(1~9번)", "동코스" vs "동") 공백·'코스'를 무시하고 맞춘다.
+  const noteKey = (s) => (s || '').replace(/\s+/g, '').replace(/코스/g, '').toLowerCase();
+  const noteKeyBare = (s) => noteKey((s || '').replace(/\(.*?\)/g, ''));
+  const noteFor = (rawName) => notes.results.find((n) => noteKey(n.course_name) === noteKey(rawName))
+    || notes.results.find((n) => noteKeyBare(n.course_name) && noteKeyBare(n.course_name) === noteKeyBare(rawName)) || null;
 
   const teeLen = new Map(); // `${course_id}|${hole_no}` → [{seq, name, m, white}]
   for (const t of tees.results) {
@@ -144,7 +150,11 @@ export async function getCourseHoleDbByClubId(env, clubId) {
         lengths,
       };
     });
-    return { id: co.course_id, name, aliases, rawName: co.course_name, holes: coHoles, tees: coTees, dataStatus: co.data_status };
+    const note = noteFor(co.course_name);
+    return {
+      id: co.course_id, name, aliases, rawName: co.course_name, holes: coHoles, tees: coTees, dataStatus: co.data_status,
+      note: note ? { description: note.description || '', lengthText: note.length_text || '' } : null,
+    };
   }).filter((sc) => sc.holes.length);
 
   // 괄호를 떼면 이름이 겹치는 경우(베어크리크 "베어(좌그린) OUT" / "베어(우그린) OUT")엔 괄호 내용을 뒤에 붙여 구분한다.
@@ -163,6 +173,26 @@ export async function getCourseHoleDbByClubId(env, clubId) {
     address: c.address,
     homepageUrl: c.homepage_url,
     dataStatus: c.data_status,
+    // 골프장 보기 화면(소개 카드)용 - migrations/0008 이후 채워짐
+    club: {
+      requestName: c.request_name || '',
+      officialName: c.official_name || '',
+      region: c.region || '',
+      city: c.city || '',
+      address: c.address || '',
+      phone: c.phone || '',
+      operationType: c.operation_type || '',
+      totalHoles: c.total_holes ?? null,
+      totalPar: c.total_par ?? null,
+      courseLayout: c.course_layout || '',
+      totalLengthText: c.total_length_text || '',
+      caddieCart: c.caddie_cart || '',
+      features: c.features || '',
+      remarks: c.remarks || '',
+      mainSources: c.main_sources || '',
+      operator: c.operator || '',
+      homepageUrl: c.homepage_url || '',
+    },
     subCourses,
     ratings: [],
   };

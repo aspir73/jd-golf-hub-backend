@@ -706,7 +706,7 @@ function isoDateAddDays(isoDateStr, days) {
 
 /** Open-Meteo 시간별 예보(start~end 날짜 범위, 시간당 1건) - "라운드 일정" 예약 골프장의 라운딩
  * 전날~당일 상세 시간대 예보 전용. fetchOpenMeteoDaily와 같은 재시도 로직. */
-async function fetchOpenMeteoHourlyRange(lat, lon, startDate, endDate) {
+export async function fetchOpenMeteoHourlyRange(lat, lon, startDate, endDate) {
   const url = new URL(OPEN_METEO_ENDPOINT);
   url.searchParams.set('latitude', String(lat));
   url.searchParams.set('longitude', String(lon));
