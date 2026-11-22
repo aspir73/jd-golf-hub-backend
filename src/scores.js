@@ -77,10 +77,11 @@ function normalizeConditions(c) {
   return out;
 }
 
-// 프로 모드(샷 단위 기록) - 티샷 1개 + 페어웨이공략(fw)/그린공략(ap)/스크램블링(sc) 각 최대 6개 + 퍼팅.
-// res: green(그린적중/온그린) · fairway · twoOn(투온) · short/long/left/right(미스 방향). dist(m): 티샷 거리 또는 핀까지/남은 거리.
+// 프로 모드(샷 단위 기록) - 티샷 1개 + 페어웨이공략(fw)/그린공략(ap) 각 최대 6개, 숏게임(sc) 최대 10개 + 퍼팅.
+// res: green(그린적중/온그린) · fairway · twoOn(투온) · short/long/left/right(미스 방향)
+//      · out(숏게임 후 여전히 그린 밖) · holed(칩인·샷 이글·홀인원). dist(m): 티샷 거리 또는 핀까지/남은 거리.
 const PRO_CLUBS = ['DR', 'W3', 'U3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9', 'P', 'W52', 'W56', 'W58'];
-const PRO_RES = ['green', 'fairway', 'twoOn', 'short', 'long', 'left', 'right'];
+const PRO_RES = ['green', 'fairway', 'twoOn', 'short', 'long', 'left', 'right', 'out', 'holed'];
 // cause: 미스 원인(컨택) / from: 스크램블링 시작 위치 / lie: 직전 샷 결과로 자동 판정한 라이
 const PRO_CAUSES = ['top', 'fat', 'shank', 'hook', 'slice'];
 const PRO_LIES = ['fairway', 'rough', 'bunker', 'fringe'];
@@ -108,12 +109,12 @@ function normalizeProShot(s) {
 
 function normalizePro(p) {
   if (!p || typeof p !== 'object') return null;
-  const list = (a) => (Array.isArray(a) ? a.slice(0, 6).map(normalizeProShot).filter(Boolean) : []);
+  const list = (a, max = 6) => (Array.isArray(a) ? a.slice(0, max).map(normalizeProShot).filter(Boolean) : []);
   return {
     tee: normalizeProShot(p.tee),
     fw: list(p.fw),
     ap: list(p.ap),
-    sc: list(p.sc),
+    sc: list(p.sc, 10),
     putt: {
       n: proNum(p.putt?.n, 9),
       first: proNum(p.putt?.first, 30),
