@@ -12,12 +12,14 @@ async function saveGroups(env, groups) {
   await env.GOLF_KV.put(GROUPS_KEY, JSON.stringify(groups));
 }
 
+const VALID_SOURCES = ['manual', 'golfpang', 'golfmon', 'kakaogolf'];
+
 function normalizeCandidate(input) {
   return {
     id: crypto.randomUUID(),
-    source: input.source === 'manual' ? 'manual' : 'golfpang',
+    source: VALID_SOURCES.includes(input.source) ? input.source : 'golfpang',
     mode: input.mode === 'join' ? 'join' : 'booking',
-    golfpangIdx: input.golfpangIdx || null,
+    externalId: input.externalId || input.golfpangIdx || null,
     courseName: input.courseName || '',
     region: input.region || '',
     date: input.date || '',

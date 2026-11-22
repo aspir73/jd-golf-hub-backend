@@ -1,0 +1,13 @@
+{
+  "ingest_url": "https://jd-golf-hub-backend.jaedong-jung.workers.dev/api/price-dashboard/ingest",
+  "ingest_secret": "REPLACE_ME",
+  "lookahead_days": 7,
+  "max_pages_per_search": 5,
+  "request_delay_seconds": 0.5,
+  "relay_secret": "REPLACE_ME",
+  "relay_port": 8787,
+  "register_url": "https://jd-golf-hub-backend.jaedong-jung.workers.dev/api/nas-relay/register",
+  "basecc_lookahead_days": 14,
+  "basecc_interval_minutes": 15,
+  "basecc_delay_seconds": 1.5
+}

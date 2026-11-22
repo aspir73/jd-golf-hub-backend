@@ -4,16 +4,25 @@
 // 아니라 <tr id="tr_{idx}">로 시작하는 HTML 테이블 조각이라 정규식으로 셀을 추출한다(칼럼 순서 고정 확인됨).
 // 크롤링이 아니라 사이트 자체가 검색 폼에서 호출하는 것과 동일한 요청을 그대로 재현하는 방식이다.
 
+import { findBestMatch } from './golfCourseDB.js';
+
 const GOLFPANG_BASE = 'https://www.golfpang.com';
 
-// 검색 폼(sct select)에서 그대로 가져온 지역 코드. 16(영호남/제주)은 하위지역(영남/호남/제주) 추가 선택이
-// 필요한 구조라 1차 버전에서는 상위 지역까지만 지원한다.
+// 검색 폼(sct select)에서 그대로 가져온 지역 코드. 처음엔 16(영호남/제주)이 sct3 서브셀렉트(영남=3/
+// 호남=6/제주=7)로 좁혀지는 구조라고만 보고 상위 지역까지만 지원했는데, 실제 검색 폼 HTML을 다시 받아보니
+// sct 자신에 "8=원주/영동"(사실상 강원) 옵션이 별도로 있었고, 직접 curl 검증 결과 sector=3/6/7을 sct3
+// 경유 없이 곧장 넣어도 그대로 필터링된다(sector=6 → 28건, 전부 "호남"). 그래서 영남/호남/제주도 각자
+// 독립된 지역 코드로 취급한다 — sector2는 실측상 결과에 영향이 없어 안 써도 된다.
 export const REGIONS = [
   { code: '', label: '전체' },
   { code: '5', label: '한강이남' },
   { code: '1', label: '강북/경춘' },
+  { code: '8', label: '강원' }, // 원주/영동
   { code: '4', label: '충청' },
-  { code: '16', label: '영호남/제주' },
+  { code: '3', label: '경상' }, // 영남
+  { code: '6', label: '전라' }, // 호남
+  { code: '7', label: '제주' },
+  { code: '16', label: '영호남/제주(통합)' },
 ];
 
 export const AMPM_OPTIONS = [
@@ -21,6 +30,16 @@ export const AMPM_OPTIONS = [
   { code: 'am', label: '오전' },
   { code: 'pm', label: '오후' },
   { code: 'nt', label: '야간' },
+];
+
+// 검색 폼의 캐디유무(cadyChk) 셀렉트 그대로. onchange="cdOrder(this.value)" — 요청 바디의 cdOrder 필드에
+// 그대로 들어간다. 실제 curl로 cdOrder=2(노캐디) 검증: 100건 중 66건이 전부 노캐디로만 걸러짐.
+export const CADDY_TYPES = [
+  { code: '', label: '전체' },
+  { code: '0', label: '일반캐디' },
+  { code: '1', label: '운전캐디' },
+  { code: '2', label: '노캐디' },
+  { code: '3', label: '인턴캐디' },
 ];
 
 function stripTags(html) {
@@ -53,12 +72,17 @@ function parseRoundRows(html) {
     }
     if (cells.length < 8) continue;
     const greenFeeMatch = (cells[7] || '').match(/[\d,]+/);
+    const courseName = cells[4] || '';
+    // 문체부 공식 골프장 DB와 매칭되면 그 공식 명칭을 실어둔다 - 카카오골프예약 쪽도 같은 DB로 매칭시키면
+    // 두 플랫폼이 "코리아CC"/"코리아컨트리클럽"처럼 표기만 다른 같은 골프장을 동일한 문자열로 취급할 수 있다.
+    // 골팡 자체 지역 라벨(cells[0])은 표준 시/도명이 아니라 매칭에 안 쓰고, 이름만으로 확신 있을 때만 채운다.
     rows.push({
       idx,
       region: cells[0] || '',
+      officialName: findBestMatch(courseName)?.name || null,
       date: cells[1] || '',
       time: cells[2] || '',
-      courseName: cells[4] || '',
+      courseName,
       holes: cells[5] || '',
       greenFee: greenFeeMatch ? Number(greenFeeMatch[0].replace(/,/g, '')) : null,
       nickname: cells[8] || '',
@@ -70,15 +94,17 @@ function parseRoundRows(html) {
   return rows;
 }
 
-/** mode: 'booking'(본인예약) | 'join'(조인/백업) */
-export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking' }) {
+/** mode: 'booking'(본인예약) | 'join'(조인/백업). page: 골팡 응답이 한 번에 최대 100건만 주기
+ * 때문에(총 매물이 수백~천 건대로 많은 지역/날짜도 흔함) 그 이상을 보려면 페이지를 넘겨가며 여러
+ * 번 불러야 한다 - searchGolfpangRoundsAllPages 참고. */
+export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', mode = 'booking', caddyType = '', page = 1 }) {
   if (!date) throw new Error('date(YYYY-MM-DD)가 필요합니다');
   const isJoin = mode === 'join';
   const endpoint = isJoin ? 'join_tblList.do' : 'booking_tblList.do';
   const refererPage = isJoin ? 'join_list.do' : 'booking_list.do';
 
   const body = new URLSearchParams({
-    pageNum: '1',
+    pageNum: String(page),
     bkOrder: '',
     rd_date: date,
     ampm,
@@ -87,7 +113,7 @@ export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', 
     cust_nick: '',
     clubname: '',
     sector2: sector,
-    cdOrder: '',
+    cdOrder: caddyType,
   });
   if (isJoin) {
     body.set('notima', '');
@@ -116,4 +142,23 @@ export async function searchGolfpangRounds(env, { date, ampm = '', sector = '', 
     totalCount: parseTotalCount(html),
     rounds: parseRoundRows(html),
   };
+}
+
+/** searchGolfpangRounds를 페이지 1부터 순서대로 불러서 합친다 - 인기 지역/날짜는 총 매물이
+ * 수백~천 건대라 페이지 1(최대 100건)만 보면 특정 골프장이 아예 안 보일 수 있다(실제로 "조인
+ * 조건검색에서는 8건 나오는데 워치는 1건만 나온다"는 사용자 리포트로 확인된 문제 - 워치·검색
+ * 둘 다 page=1 고정이라 매물이 많으면 요청마다 골팡 서버의 기본 정렬 순서상 다른 부분만 잘려
+ * 보였던 것). 마지막 페이지(응답이 100건 미만)를 만나거나 maxPages에 도달하면 멈춘다. */
+export async function searchGolfpangRoundsAllPages(env, params, maxPages = 1) {
+  let mode = params.mode === 'join' ? 'join' : 'booking';
+  let totalCount = null;
+  const rounds = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await searchGolfpangRounds(env, { ...params, page });
+    mode = result.mode;
+    if (totalCount == null) totalCount = result.totalCount;
+    rounds.push(...result.rounds);
+    if (result.rounds.length < 100) break; // 마지막 페이지
+  }
+  return { mode, totalCount, rounds };
 }

@@ -26,6 +26,101 @@ async function kakaoFetch(env, path, params) {
   return res.json();
 }
 
+const HTML_TAG_RE = /<\/?[a-z]+>/gi;
+
+/** 골프장 홈페이지 URL 후보 검색 (카카오 웹검색). 실제 캡처로 확인해보니 1등 결과가 골프장 공식
+ * 사이트가 아니라 후기 블로그/코스 소개 사이트인 경우가 흔해서(예: "코리아컨트리클럽" 검색 시
+ * heyjayboy.com 같은 후기 사이트가 1등) 자동으로 하나를 골라 채워넣지 않고, 후보 목록을 그대로
+ * 돌려줘서 프론트에서 사용자가 직접 고르게 한다 - 잘못된 사이트를 자동으로 넣는 것보단 안전하다. */
+export async function searchHomepageCandidates(env, courseName) {
+  if (!env.KAKAO_API_KEY) return [];
+  const url = new URL('https://dapi.kakao.com/v2/search/web');
+  url.searchParams.set('query', `${courseName} 홈페이지`);
+  url.searchParams.set('size', '5');
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `KakaoAK ${env.KAKAO_API_KEY}` },
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.documents || []).map((d) => ({
+    title: (d.title || '').replace(HTML_TAG_RE, ''),
+    url: d.url,
+  }));
+}
+
+/** 골프장명 -> 집 주소까지의 자동차 거리/이동시간을 한 번에 계산(이름으로 좌표 찾기 + 길찾기).
+ * 예약 기록 저장 시 자동으로 채워주는 용도 - 이름으로 좌표를 못 찾거나 길찾기가 실패하면 null
+ * (부가정보라 실패해도 예약 저장 자체를 막지 않는다). */
+/** 골프장명으로 카카오 장소(좌표)를 찾는다. 예약에 적힌 이름이 "윈체스트 골프클럽 대중"처럼 카카오 표기와
+ * 달라서 통째로는 검색 결과가 없는 경우가 있어, 끝의 구분어(대중/퍼블릭/회원제)와 괄호를 뗀 이름,
+ * 공백 없는 이름 순으로 다시 찾는다. 카테고리가 "골프장"인 결과를 우선하고, 없으면 첫 결과를 쓴다. */
+export async function findGolfPlace(env, courseName) {
+  const base = (courseName || '').trim();
+  if (!base) return null;
+  const stripped = base.replace(/\s*\(.*?\)\s*/g, ' ').replace(/\s+(대중제?|퍼블릭|회원제|P9)$/i, '').trim();
+  const candidates = [...new Set([base, stripped, stripped.replace(/\s+/g, '')].filter(Boolean))];
+  let firstAny = null;
+  for (const q of candidates) {
+    try {
+      const places = await searchKeyword(env, q);
+      const golf = places.find((p) => /골프장/.test(p.category || '') && p.lat != null && p.lon != null);
+      if (golf) return golf;
+      if (!firstAny && places[0]?.lat != null) firstAny = places[0];
+    } catch { /* 다음 후보로 */ }
+  }
+  return firstAny;
+}
+
+export async function resolveCourseTravelInfo(env, courseName, homeLat, homeLon) {
+  if (!courseName || homeLat == null || homeLon == null) return null;
+  try {
+    const best = await findGolfPlace(env, courseName);
+    if (!best || best.lat == null || best.lon == null) return null;
+    return await cachedDrivingRoute(env, homeLat, homeLon, best.lat, best.lon);
+  } catch {
+    return null;
+  }
+}
+
+/** 카카오모빌리티 길찾기(자동차 경로) - 집 주소 <-> 골프장 검색결과 거리/이동시간 계산용.
+ * dapi.kakao.com(Local API)과는 별도 base(apis-navi.kakaomobility.com)이지만 같은 REST API 키로 호출된다
+ * (별도 활용신청/제품 등록 없이 실제 호출로 확인됨). 경로를 못 찾는 경우(고속도로 미개통 지역 등)엔
+ * null을 돌려주고 호출부에서 조용히 생략하게 한다 - 거리/시간은 부가정보라 실패해도 검색 자체는 막지 않는다. */
+export async function fetchDrivingRoute(env, originLat, originLon, destLat, destLon) {
+  if (!env.KAKAO_API_KEY) return null;
+  const url = new URL('https://apis-navi.kakaomobility.com/v1/directions');
+  url.searchParams.set('origin', `${originLon},${originLat}`);
+  url.searchParams.set('destination', `${destLon},${destLat}`);
+  try {
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `KakaoAK ${env.KAKAO_API_KEY}` },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const summary = data?.routes?.[0]?.summary;
+    if (!summary || data.routes[0].result_code !== 0) return null;
+    return {
+      distanceKm: Math.round((summary.distance / 1000) * 10) / 10,
+      durationMin: Math.round(summary.duration / 60),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 집→골프장 자동차 경로를 "도착 좌표(소수 4자리≈10m)+집 좌표" 기준으로 30일 캐시한다. 예전엔 골프장 이름별로
+ * 따로 계산·캐시해서, 태광CC(회원제)/(대중제)처럼 같은 장소인데 이름이 다른 골프장이 계산 시점의 교통 상황에 따라
+ * 서로 다른 소요시간으로 보였다 - 같은 좌표면 항상 같은 값이 나오게 한다. */
+export async function cachedDrivingRoute(env, homeLat, homeLon, lat, lon) {
+  if ([homeLat, homeLon, lat, lon].some((v) => v == null || !Number.isFinite(Number(v)))) return null;
+  const key = `route:v1:${Number(homeLat).toFixed(3)},${Number(homeLon).toFixed(3)}>${Number(lat).toFixed(4)},${Number(lon).toFixed(4)}`;
+  const hit = await env.GOLF_KV.get(key, 'json').catch(() => null);
+  if (hit) return hit;
+  const route = await fetchDrivingRoute(env, homeLat, homeLon, lat, lon);
+  if (route) await env.GOLF_KV.put(key, JSON.stringify(route), { expirationTtl: 30 * 24 * 3600 }).catch(() => {});
+  return route;
+}
+
 function mapPlace(d) {
   return {
     name: d.place_name,
@@ -36,6 +131,19 @@ function mapPlace(d) {
     category: d.category_name || '',
     placeUrl: d.place_url || '',
     distanceMeters: d.distance ? Number(d.distance) : null,
+  };
+}
+
+/** 좌표 -> 행정구역(시/도, 시/군/구) 역지오코딩. 기상청 중기예보 지역코드 매칭용(골프장 좌표 -> regId) */
+export async function coordToRegion(env, lat, lon) {
+  const data = await kakaoFetch(env, '/geo/coord2regioncode.json', { x: lon, y: lat });
+  // region_type 'H'(행정동) 우선, 없으면 'B'(법정동)
+  const docs = data.documents || [];
+  const doc = docs.find((d) => d.region_type === 'H') || docs[0];
+  if (!doc) return null;
+  return {
+    sido: doc.region_1depth_name || '',
+    sigungu: doc.region_2depth_name || '',
   };
 }
 
@@ -50,6 +158,47 @@ export async function searchKeyword(env, query, { lat, lon } = {}) {
   return (data.documents || []).map(mapPlace);
 }
 
+function mapAddress(d) {
+  const road = d.road_address;
+  const jibun = d.address;
+  return {
+    name: road?.building_name || d.address_name || '',
+    address: road?.address_name || jibun?.address_name || d.address_name || '',
+    phone: '',
+    lat: Number(d.y),
+    lon: Number(d.x),
+    category: '',
+    placeUrl: '',
+    distanceMeters: null,
+  };
+}
+
+/** 도로명/지번 주소로 검색 (keyword.json은 상호명 위주라 "백현로277"처럼 건물명 없는
+ *  순수 주소는 못 찾는 경우가 많음 - 카카오가 주소 전용으로 제공하는 별도 API) */
+export async function searchAddress(env, query) {
+  const data = await kakaoFetch(env, '/search/address.json', { query, size: 10 });
+  return (data.documents || []).map(mapAddress);
+}
+
+/** 주소 검색과 키워드(상호명) 검색을 함께 돌려서 합친다.
+ *  "백현로277" 같은 순수 도로명 주소와 "OO컨트리클럽" 같은 상호명 둘 다 자동완성되게.
+ *  주소 검색 결과를 우선 배치하고(더 정확한 매칭), 좌표가 거의 같은 중복은 제거한다. */
+export async function searchPlaces(env, query) {
+  const [addressResults, keywordResults] = await Promise.all([
+    searchAddress(env, query).catch(() => []),
+    searchKeyword(env, query).catch(() => []),
+  ]);
+  const seen = new Set();
+  const merged = [];
+  for (const p of [...addressResults, ...keywordResults]) {
+    const key = p.lat != null && p.lon != null ? `${p.lat.toFixed(5)},${p.lon.toFixed(5)}` : `${p.name}|${p.address}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(p);
+  }
+  return merged;
+}
+
 /** 좌표 주변 카테고리/키워드 검색 (맛집 찾기용). query가 있으면 좌표 기준 정렬 키워드검색, 없으면 카테고리검색 */
 export async function searchNearby(env, { lat, lon, categoryGroupCode, radius = 3000, query }) {
   if (!lat || !lon) throw new Error('lat, lon이 필요합니다');
@@ -59,6 +208,15 @@ export async function searchNearby(env, { lat, lon, categoryGroupCode, radius = 
     : { category_group_code: categoryGroupCode, x: lon, y: lat, radius, sort: 'distance' };
   const data = await kakaoFetch(env, path, params);
   return (data.documents || []).map(mapPlace);
+}
+
+/** 현재 위치 기준 가까운 골프장(스코어카드 시작 화면). 카카오 키워드검색 "골프장"을 거리순으로 받아
+ * 골프연습장/스크린골프 등은 카테고리로 걸러낸다(카테고리가 "스포츠,레저 > 골프 > 골프장"인 것만). */
+export async function searchNearbyGolfCourses(env, { lat, lon, radius = 30000 }) {
+  const places = await searchNearby(env, { lat, lon, query: '골프장', radius });
+  return places
+    .filter((p) => /골프장/.test(p.category || '') && !/연습장|스크린/.test(p.category || ''))
+    .map((p) => ({ ...p, distanceKm: distanceKm(lat, lon, p.lat, p.lon) }));
 }
 
 /** Haversine 직선거리(km). 카카오 길찾기(내비) API는 별도 승인/유료라 MVP2에서는 직선거리로 근사한다 */

@@ -26,13 +26,15 @@ function courseRatingAverage(scores, courseName) {
   return Math.round((matches.reduce((sum, s) => sum + s.courseRating, 0) / matches.length) * 10) / 10;
 }
 
-/** 그룹의 각 후보에 대해 거리(km)/내 평가 평균/그린피/시간대를 채워서 반환 */
+/** 그룹의 각 후보에 대해 거리(km)/내 평가 평균/그린피/시간대를 채워서 반환. 후보별 카카오
+ * 검색은 서로 독립적이라(순서 무관) Promise.all로 동시에 처리한다 - 예전엔 for...of + await로
+ * 한 번에 하나씩 순차 호출해서, 비교 그룹에 후보가 N개면 거리 계산에만 N번의 왕복 지연이
+ * 그대로 누적됐다(5개 후보면 카카오 API 5번을 순서대로 기다림 = 병렬 대비 최대 5배 느림). */
 export async function computeCandidateComponents(env, group) {
   const settings = await getSettings(env);
   const scores = await listScores(env);
 
-  const results = [];
-  for (const candidate of group.candidates) {
+  const results = await Promise.all(group.candidates.map(async (candidate) => {
     let distance = null;
     if (settings.homeLat != null && settings.homeLon != null && candidate.courseName) {
       try {
@@ -45,7 +47,7 @@ export async function computeCandidateComponents(env, group) {
         distance = null;
       }
     }
-    results.push({
+    return {
       candidateId: candidate.id,
       courseName: candidate.courseName,
       distanceKm: distance,
@@ -54,11 +56,11 @@ export async function computeCandidateComponents(env, group) {
       timeSlot: timeSlotOf(candidate.time),
       time: candidate.time,
       date: candidate.date,
-    });
-  }
+    };
+  }));
 
   return {
-    preferredTimeSlot: settings.preferredTimeSlot,
+    preferredTimeSlots: settings.preferredTimeSlots,
     candidates: results,
   };
 }

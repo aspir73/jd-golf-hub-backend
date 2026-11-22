@@ -1,0 +1,62 @@
+club_id,club_name,source_name,alt_url,current_url,note
+GC0058,양지파인골프클럽,양지파인CC,https://www.pineresort.com/,https://www.pineresort.com/Golf/CourseInfo.aspx,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0102,"더헤븐CC (구 아일랜드CC, 더헤븐 리조트)",더헤븐CC(대부도),https://www.theheavenresort.com/,http://www.islandresort.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0100,해비치 컨트리클럽,해비치CC,https://www.haevichi.com/ccseoul/ko/,https://haevichi.com,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0127,송추 컨트리클럽,송추CC,http://m.songchoo.co.kr/,http://www.songchoo.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0139,골프클럽Q,골프클럽Q,https://www.golfclubq.com/,http://www.golfclubq.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0144,신안컨트리클럽,신안CC,https://www.shinan.co.kr/business/golf/shinancc,http://www.shinancc.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0142,안성컨트리클럽,안성CC,https://www.ansungcc.co.kr/,https://www.ansungcc.co.kr/Course/ScoreCard.aspx,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0129,뉴스프링빌골프장,뉴스프링빌CC,https://icheon.newspring.co.kr/,http://www.newspringville.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0133,블랙스톤골프장,블랙스톤이천CC,https://www.blackstoneresort.com/ic/aboutList,http://www.blackstone.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0132,사우스스프링스C.C,사우스스프링CC(전 휘닉스스프링스),https://www.sscc.co.kr/,http://www.southsprings.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0137,더크로스비골프클럽,더크로스비CC,https://www.thecrosbygc.co.kr/,http://www.thecrosby.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0136,웰링턴컨트리클럽,웰링턴CC,https://wellingtoncountryclub.com/,http://www.wellingtoncc.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0173,이포골프장,이포CC,https://www.ipocc.com/,http://ipo-cc.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0182,여주썬밸리 컨트리클럽,여주썬밸리CC,https://www.yeojusunvalley.co.kr/,https://www.sunvalley.co.kr/yeoju/golf/course_intro,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0154,몽베르 컨트리클럽,대유몽베르,https://www.montvertcc.com/,http://www.montvert.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0151,필로스 골프클럽,필로스CC,https://www.philosgc.com/,http://www.philoscc.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0155,일동레이크 골프클럽,일동레이크,https://ildonglakes.co.kr/,http://www.ildonglake.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0156,푸른솔 골프클럽 포천,푸른솔포천CC,https://www.purunsol.co.kr/,https://www.purunsol.co.kr/Course/Info.aspx,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0090,리베라컨트리클럽,리베라CC,https://www.shinangolf.com/club/rivieracc,https://www.rivieracc.co.kr/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0092,발리오스컨트리클럽,발리오스CC,https://balioscc.com/,https://www.baliosgc.com,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0188,프리스틴밸리 골프클럽,프리스틴밸리CC,https://pristinevalley.co.kr/,http://www.pvgc.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0044,동강시스타 골프장,영월동강시스타CC,https://www.cistar.co.kr/,https://cistar.kr/golf/course-guide/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0052,설악썬밸리컨트리클럽,설악썬밸리CC,https://www.sunvalley.co.kr/,https://www.sunvalley.co.kr/seorak/golf/course_intro,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0050,에콜리안정선골프장,에콜리안정선CC,http://js.ecolian.or.kr/,https://www.ecolian.or.kr/cotents/course/courseInfo.do,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0051,한탄강컨트리클럽,한탄강CC,https://hantancc.co.kr/,https://hantancc.co.kr/m21.php,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0045,용평리조트골프클럽,용평CC,https://www.yongpyong.co.kr/kor/golf/clubGuide/yongpyongIntro.do,https://www.yongpyong.co.kr/kor/golf/course/totalPlace.do,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0048,알펜시아컨트리클럽,알펜시아트룬CC,https://www.alpensia.com/golf/main.do,https://www.alpensia.com/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0048,알펜시아컨트리클럽,알펜시아700CC,https://www.alpensia.com/golf/main.do,https://www.alpensia.com/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0034,클럽모우골프 &라이프스타일,클럽모우GC,https://www.clubmow.com/default.asp,https://www.clubmow.com/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0033,힐드로사이컨트리클럽,힐드로사이CC,https://www.hilldeloci.co.kr/index.asp,https://www.hilldeloci.co.kr/,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0038,웰리힐리컨트리클럽,웰리힐리CC,https://www.wellihillipark.com/,https://www.wellihillipark.com/golf,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0474,에콜리안제천,에콜리안 제천컨트리클럽,http://jc.ecolian.or.kr/,https://www.ecolian.or.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0480,올데이 골프앤리조트,올데이 골프앤리조트,https://www.ilcc.co.kr/,https://alldaygolf.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0479,클럽디보은,클럽디보은,https://www.clubd.co.kr/,https://www.clubd.co.kr/boeun,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0482,일라이트 컨트리클럽,일라이트컨트리클럽,https://illitegolfnresort.co.kr/golf/main,https://illitegolfnresort.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0424,우정힐스 컨트리클럽,우정힐스컨트리클럽,http://whcc.kolon.co.kr/,https://whcc.kolon.co.kr/pagesite/course/intro.asp,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0425,천안상록 골프장,천안상록골프장(공무원연금공단),https://www.sangnokresort.com/,https://www.sangnokresort.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0443,㈜호텔롯데 스카이힐 부여CC,롯데스카이힐 부여컨트리클럽,https://www.lotteskyhill.com/club/club-intro/club-intro-buyeo,https://www.lotteskyhill.com/club/course/club-course-buyeo,golf_clubs.csv와 URL 다름(현재 값 유지)
+GC0447,솔라고CC1,솔라고컨트리클럽,http://sollago.co.kr/index.asp,http://sollago.co.kr,golf_clubs.csv와 URL 다름(현재 값 유지)
+,,123골프클럽,http://www.123golfclub.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,서창퍼블릭골프클럽,http://seochanggolf.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,더 시에나 서울 컨트리클럽(구 중부CC),https://thesiena.co.kr/content/seoulcc,,golf_clubs.csv에 매칭되는 골프장 없음
+,,선봉대체력단련장,https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,처인CC(국방부),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,제이퍼블릭G.C,http://www.jpublic.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,H1CC(군인공제회),https://www.h1club.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,동여주체력단련장(국방부),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,마이다스CC,https://icmidas.com/home.asp,,"golf_clubs.csv에 매칭되는 골프장 없음 (후보: 마이다스레이크 이천 골프&리조트, 마이다스밸리 청평 골프클럽)"
+,,비승대체력단련장(육군),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,트리니티CC,https://www.trinityclub.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,여주신라CC,https://www.onetheclub.com/shilla/main,,golf_clubs.csv에 매칭되는 골프장 없음
+,,아난티서울CC,https://ananti.kr/ko/chord/golfclub/information,,golf_clubs.csv에 매칭되는 골프장 없음
+,,세레니티강촌CC(구 파가니카CC),https://www.serenitygangchon.com/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,실크리버컨트리클럽,https://www.serenitycc.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,에버힐골프클럽,http://www.everhillgc.com/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,남성대체력단련장(육군),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,진천에머슨CC,https://www.emersongolfclub.co.kr/,,golf_clubs.csv에 매칭되는 골프장 없음
+,,계룡체력단련장(육군),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,구룡체력단련장(육군),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,창공대체력단련장(육군),https://www.armywelfaregolf.mil.kr/subPage.do,,golf_clubs.csv에 매칭되는 골프장 없음
+,,나인스타컨트리클럽,http://www.9star.co.kr/html/main.asp,,golf_clubs.csv에 매칭되는 골프장 없음

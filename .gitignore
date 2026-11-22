@@ -1,3 +1,17 @@
 node_modules/
 .wrangler/
 .dev.vars
+.vscode/
+
+# NAS 수집 스크립트 시크릿/로그 (nas-collector/README.md 참고)
+nas-collector/config.json
+nas-collector/logs/
+nas-collector/__pycache__/
+
+# 전국 골프장 DB 적재용 SQL (scripts/build_golf_course_db_sql.py로 data/*.csv에서 생성)
+data/golf_course_db_seed.sql
+data/golf_course_db_diff.sql
+
+# 파이썬 캐시 / Claude Code 개인 설정
+__pycache__/
+.claude/settings.local.json
